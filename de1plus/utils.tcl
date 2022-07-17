@@ -1,162 +1,77 @@
-package provide de1_utils 1.0
+package provide de1_utils 1.1
 
-# from https://developer.android.com/reference/android/view/View.html#SYSTEM_UI_FLAG_IMMERSIVE
-set SYSTEM_UI_FLAG_IMMERSIVE_STICKY 0x00001000
-set SYSTEM_UI_FLAG_FULLSCREEN 0x00000004
-set SYSTEM_UI_FLAG_HIDE_NAVIGATION 0x00000002
-set SYSTEM_UI_FLAG_IMMERSIVE 0x00000800
-set SYSTEM_UI_FLAG_LAYOUT_STABLE 0x00000100
-set SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION 0x00000200
-set SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN 0x00000400
-set ::android_full_screen_flags [expr {$SYSTEM_UI_FLAG_LAYOUT_STABLE | $SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | $SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | $SYSTEM_UI_FLAG_HIDE_NAVIGATION | $SYSTEM_UI_FLAG_FULLSCREEN | $SYSTEM_UI_FLAG_IMMERSIVE}]
+package require de1_logging 1.0
+package require de1_metadata 1.0
 
 proc setup_environment {} {
-    #puts "setup_environment"
-    global screen_size_width
-    global screen_size_height
-    global fontm
-    global android
-    global undroid
+	global android
+	global undroid
+	global settings
+	global fontm
 
-    set ::globals(listbox_length_multiplier) 1
-    set ::globals(listbox_global_width_multiplier) 1
+	# Set DUI settings from the app stored settings
+	foreach s {default_font_calibration use_finger_down_for_tap disable_long_press timer_interval enable_spoken_prompts 
+			speaking_pitch speaking_rate } {
+		if { [info exists settings($s)] } {
+			dui config $s $settings($s)
+		}
+	}
+	dui config language [language]
+	dui font add_dirs "[homedir]/fonts/"	
+	dui config preload_images $::settings(preload_all_page_images)
+	dui sound set button_in "[homedir]/sounds/KeypressStandard_120.ogg" \
+		button_out "[homedir]/sounds/KeypressDelete_120.ogg" \
+		page_change "[homedir]/sounds/KeypressDelete_120.ogg"
+	
+	dui init $settings(screen_size_width) $settings(screen_size_height) $settings(orientation)
+	
+	# Do this after dui init, so if the same image is on the current skin and in default, the one in the skin directory takes precedence
+	dui image add_dirs "[homedir]/skins/default/"
 
-    set ::globals(entry_length_multiplier) 1
-
-    if {$android == 1 || $undroid == 1} {
-
-        # hide the android keyboard that pops up when you power back on
-        bind . <<DidEnterForeground>> hide_android_keyboard
-
-        # this causes the app to exit if the main window is closed
-        wm protocol . WM_DELETE_WINDOW exit
-
-        # set the window title of the app. Only visible when casting the app via jsmpeg, and when running the app in a window using undroidwish
-        wm title . "Decent"
-
-        # force the screen into landscape if it isn't yet
-        msg "orientation: [borg screenorientation]"
-        if {[borg screenorientation] != "landscape" && [borg screenorientation] != "reverselandscape"} {
-            borg screenorientation $::settings(orientation)
-        }
-
-        sdltk screensaver off
-        
-
-        if {$::settings(screen_size_width) != "" && $::settings(screen_size_height) != ""} {
-            set screen_size_width $::settings(screen_size_width)
-            set screen_size_height $::settings(screen_size_height)
-
-        } else {
+	source "bluetooth.tcl"
+	
+	# Configure actions on specific pages (this was previously hardcoded on page_display_change, and should be moved 
+	# later to the part of the GUI that builds those pages).
+	dui page add_action off load ::off_page_onload
+	dui page add_action saver load ::saver_page_onload
+	dui page add_action {} load ::adjust_machine_nextpage
+	dui page add_action {} load ::page_onload
+	if { $::android == 0 } {
+		dui page add_action {} update_vars ::set_dummy_espresso_vars
+	}
+	
+	# only calculate the tablet's dimensions once, then save it in settings for a faster app startup
+	set ::screen_size_width [dui cget screen_size_width]
+	set ::screen_size_height [dui cget screen_size_height]
+	if { $settings(screen_size_width) != $::screen_size_width || $settings(screen_size_height) != $::screen_size_height } {
+		set settings(screen_size_width) $::screen_size_width
+		set settings(screen_size_height) $::screen_size_height
+		save_settings
+#	}
+	# Enrique: This shouldn't be necessary anymore but still the $::rescale_*_ratio vars are used in a couple of procs
+	if { ![file exists "skins/default/${::screen_size_width}x${::screen_size_height}"] } {
+		set ::rescale_images_x_ratio [expr {$::screen_size_height / $::dui::_base_screen_height}]
+		set ::rescale_images_y_ratio [expr {$::screen_size_width / $::dui::_base_screen_width}]
+	}
 
 
-            # A better approach than a pause to wait for the lower panel to move away might be to "bind . <<ViewportUpdate>>" or (when your toplevel is in fullscreen mode) to "bind . <Configure>" and to watch out for "winfo screenheight" in the bound code.
-            if {$android == 1} {
-                pause 500
-            }
-
-            set width [winfo screenwidth .]
-            set height [winfo screenheight .]
-
-            if {$width > 2300} {
-                set screen_size_width 2560
-                if {$height > 1450} {
-                    set screen_size_height 1600
-                } else {
-                    set screen_size_height 1440
-                }
-            } elseif {$height > 2300} {
-                set screen_size_width 2560
-                if {$width > 1440} {
-                    set screen_size_height 1600
-                } else {
-                    set screen_size_height 1440
-                }
-            } elseif {$width == 2048 && $height == 1440} {
-                set screen_size_width 2048
-                set screen_size_height 1440
-                #set fontm 2
-            } elseif {$width == 2048 && $height == 1536} {
-                set screen_size_width 2048
-                set screen_size_height 1536
-                #set fontm 2
-            } elseif {$width == 1920} {
-                set screen_size_width 1920
-                set screen_size_height 1080
-                if {$width > 1080} {
-                    set screen_size_height 1200
-                }
-
-            } elseif {$width == 1280} {
-                set screen_size_width 1280
-                set screen_size_height 800
-                if {$width >= 720} {
-                    set screen_size_height 800
-                } else {
-                    set screen_size_height 720
-                }
-            } else {
-                # unknown resolution type, go with smallest
-                set screen_size_width 1280
-                set screen_size_height 800
-            }
-
-            # only calculate the tablet's dimensions once, then save it in settings for a faster app startup
-            set ::settings(screen_size_width) $screen_size_width 
-            set ::settings(screen_size_height) $screen_size_height
-            save_settings
-        }
-
-        # Android seems to automatically resize fonts appropriately to the current resolution
-        set fontm $::settings(default_font_calibration)
-        set ::fontw 1
-
-        if {$::undroid == 1} {
-            # undroid does not resize fonts appropriately for the current resolution, it assumes a 1024 resolution
-            set fontm [expr {($screen_size_width / 1024.0)}]
-            set ::fontw 2
-        }
-
-        if {[file exists "skins/default/${screen_size_width}x${screen_size_height}"] != 1} {
-            set ::rescale_images_x_ratio [expr {$screen_size_height / 1600.0}]
-            set ::rescale_images_y_ratio [expr {$screen_size_width / 2560.0}]
-        }
-
-        global helvetica_bold_font
-        global helvetica_font
-        set global_font_size 18
-        #puts "setting up fonts for language [language]"
-        if {[language] == "th"} {
-            set helvetica_font [sdltk addfont "fonts/sarabun.ttf"]
-            set helvetica_bold_font [sdltk addfont "fonts/sarabunbold.ttf"]
-            set fontm [expr {($fontm * 1.2)}]
-            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
-            set global_font_size 16
-        } elseif {[language] == "ar" || [language] == "arb"} {
-            set helvetica_font [sdltk addfont "fonts/Dubai-Regular.otf"]
-            set helvetica_bold_font [sdltk addfont "fonts/Dubai-Bold.otf"]
-            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
-        } elseif {[language] == "he" || [language] == "heb"} {
-            set ::globals(listbox_length_multiplier) 1.35
-            set ::globals(entry_length_multiplier) 0.86
-            set helvetica_font [sdltk addfont "fonts/hebrew-regular.ttf"]
-            set helvetica_bold_font [sdltk addfont "fonts/hebrew-bold.ttf"]
-            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
-        } elseif {[language] == "zh-hant" || [language] == "zh-hans" || [language] == "kr"} {
-            set helvetica_font [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
-            set helvetica_bold_font [lindex [sdltk addfont "fonts/NotoSansCJKjp-Bold.otf"] 0]
-            set global_font_name $helvetica_font
-
-            set fontm [expr {($fontm * .94)}]
-        } else {
-            # we use the immense google font so that we can handle virtually all of the world's languages with consistency
-            set helvetica_font [sdltk addfont "fonts/notosansuiregular.ttf"]
-            set helvetica_bold_font [sdltk addfont "fonts/notosansuibold.ttf"]
-            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
-
-        }            
-
-        set fontawesome_brands [lindex [sdltk addfont "fonts/Font Awesome 5 Brands-Regular-400.otf"] 0]
+	# Re-store what are now DUI namespace variables into the original global variables to ensure backwards-compatibility
+	# with existing code, until all code is migrated.
+	set ::globals(listbox_global_width_multiplier) [dui cget listbox_global_width_multiplier]
+	set ::globals(listbox_length_multiplier) [dui cget listbox_length_multiplier] 
+	set ::globals(entry_length_multiplier) [dui cget entry_length_multiplier]
+	set fontm [dui cget fontm]
+	#set ::fontw [dui cget fontw]
+	
+	# Create hardcoded fonts used in default and Insight skins. These should be replaced by DUI aspects in the future,
+	# but are left at the moment to guarantee backwards-compatibility.
+	set helvetica_font [dui aspect get dtext font_family -theme default]
+	set helvetica_bold_font [dui aspect get dtext font_family -theme default -style bold]
+	set global_font_name [dui aspect get dtext font_family -theme default -style global]
+	set global_font_size [dui aspect get dtext font_size -theme default -style global]
+	set fontawesome_brands [dui aspect get symbol font_family -theme default -style brands]
+		
+	if {$android == 1 || $undroid == 1} {
         font create Fontawesome_brands_11 -family $fontawesome_brands -size [expr {int($fontm * 20)}]
 
         font create global_font -family $global_font_name -size [expr {int($fontm * $global_font_size)}] 
@@ -187,90 +102,16 @@ proc setup_environment {} {
         font create Helv_19_bold -family $helvetica_bold_font -size [expr {int($fontm * 35)}] 
         font create Helv_20_bold -family $helvetica_bold_font -size [expr {int($fontm * 37)}]
         font create Helv_30_bold -family $helvetica_bold_font -size [expr {int($fontm * 54)}]
-        font create Helv_30 -family $helvetica_font -size [expr {int($fontm * 56)}]
-
-        # enable swipe gesture translating, to scroll through listboxes
-        # sdltk touchtranslate 1
-        # disable touch translating as it does not feel native on tablets and is thus confusing
-        if {$::settings(disable_long_press) != 1 } {        
-            sdltk touchtranslate 1
-        } else {
-            sdltk touchtranslate 0
-        }
-
-        wm maxsize . $screen_size_width $screen_size_height
-        wm minsize . $screen_size_width $screen_size_height
-        wm attributes . -fullscreen 1
-
-        # flight mode, not yet debugged
-        #if {$::settings(flight_mode_enable) == 1 } {
-        #    if {[package require de1plus] > 1} {
-        #        borg sensor enable 0
-        #        sdltk accelerometer 1
-        #        after 200 accelerometer_check 
-        #    }
-        #}
-
-        # preload the speaking engine 
-        # john 2/12/18 re-enable this when TTS feature is enabled
-        # borg speak { }
-
-        source "bluetooth.tcl"
-
-    } else {
-
-        # global font is wider on non-android
-        set ::globals(listbox_global_width_multiplier) .8
-        set ::globals(listbox_length_multiplier) 1
-
-
-        expr {srand([clock milliseconds])}
-
-        if {$::settings(screen_size_width) != "" && $::settings(screen_size_height) != ""} {
-            set screen_size_width $::settings(screen_size_width)
-            set screen_size_height $::settings(screen_size_height)
-        } else {
-            # if this is the first time running on Tk, then use a default 1280x800 resolution, and allow changing resolution by editing settings file
-            set screen_size_width 1280
-            set screen_size_height 800
-
-            set ::settings(screen_size_width) $screen_size_width 
-            set ::settings(screen_size_height) $screen_size_height
-            save_settings
-
-        }
-
-        set fontm [expr {$screen_size_width / 1280.0}]
-        set ::fontw 2
-
-        package require Tk
-        catch {
-            # tkblt has replaced BLT in current TK distributions, not on Androwish, they still use BLT and it is preloaded
-            package require tkblt
-            namespace import blt::*
-        }
-
-        wm maxsize . $screen_size_width $screen_size_height
-        wm minsize . $screen_size_width $screen_size_height
-
-        if {[file exists "skins/default/${screen_size_width}x${screen_size_height}"] != 1} {
-            set ::rescale_images_x_ratio [expr {$screen_size_height / 1600.0}]
-            set ::rescale_images_y_ratio [expr {$screen_size_width / 2560.0}]
-        }
-
-        set regularfont "notosansuiregular"
-        set boldfont "notosansuibold"
-
-        if {[language] == "th"} {
-            set regularfont "sarabun"
-            set boldfont "sarabunbold"
-            #set fontm [expr {($fontm * 1.20)}]
-        } elseif {[language] == "zh-hant" || [language] == "zh-hans"} {
-            set regularfont "notosansuiregular"
-            set boldfont "notosansuibold"
-        }
-
-        set ::helvetica_font $regularfont
+        font create Helv_30 -family $helvetica_font -size [expr {int($fontm * 56)}]				
+	} else {
+		set regularfont $helvetica_font
+		set boldfont $helvetica_bold_font
+		font create Fontawesome_brands_11 -family $fontawesome_brands -size [expr {int($fontm * 25)}]
+		
+		font create global_font -family $global_font_name  -size [expr {int($fontm * 23)}] 
+				
+		set regularfont $helvetica_font
+		set boldfont $helvetica_bold_font
         font create Helv_1 -family $regularfont -size 1
         font create Helv_4 -family $regularfont -size 10
         font create Helv_5 -family $regularfont -size 12
@@ -298,37 +139,371 @@ proc setup_environment {} {
         font create Helv_20_bold -family $boldfont -size [expr {int($fontm * 48)}]
         font create Helv_30_bold -family $boldfont -size [expr {int($fontm * 69)}]
         font create Helv_30 -family $regularfont -size [expr {int($fontm * 72)}]
+	}
+	
+	metadata init
+	source "app_metadata.tcl"
+	init_app_metadata
+			
+	after 60000 schedule_minute_task
 
-        
-        font create Fontawesome_brands_11 -family "Font Awesome 5 Brands Regular" -size [expr {int($fontm * 25)}]
-
-
-        font create global_font -family "Noto Sans CJK JP" -size [expr {int($fontm * 23)}] 
-        android_specific_stubs
-        source "bluetooth.tcl"
-    }
-
-    # define the canvas
-    . configure -bg black 
-    canvas .can -width $screen_size_width -height $screen_size_height -borderwidth 0 -highlightthickness 0
-
-    after 60000 schedule_minute_task
-    #after 1000 schedule_minute_task
-
-    ############################################
-    # future feature: flight mode
-    #if {$::settings(flight_mode_enable) == 1} {
-        #if {$android == 1} {
-        #   .can bind . "<<SensorUpdate>>" [accelerometer_data_read]
-        #}
-        #after 250 accelerometer_check
-    #}
-
-    ############################################
+	return
+	
+#    #puts "setup_environment"
+#    global screen_size_width
+#    global screen_size_height
+#    global fontm
+#    global android
+#    global undroid
+#
+#    set ::globals(listbox_length_multiplier) 1
+#    set ::globals(listbox_global_width_multiplier) 1
+#
+#    set ::globals(entry_length_multiplier) 1
+#
+#    if {$android == 1 || $undroid == 1} {
+#
+#        # hide the android keyboard that pops up when you power back on
+#        bind . <<DidEnterForeground>> hide_android_keyboard
+#
+#        # this causes the app to exit if the main window is closed
+#        wm protocol . WM_DELETE_WINDOW exit
+#
+#        # set the window title of the app. Only visible when casting the app via jsmpeg, and when running the app in a window using undroidwish
+#        wm title . "Decent"
+#
+#        # force the screen into landscape if it isn't yet
+#        msg "orientation: [borg screenorientation]"
+#        if {[borg screenorientation] != "landscape" && [borg screenorientation] != "reverselandscape"} {
+#            borg screenorientation $::settings(orientation)
+#        }
+#
+#        sdltk screensaver off
+#        
+#
+#        if {$::settings(screen_size_width) != "" && $::settings(screen_size_height) != ""} {
+#            set screen_size_width $::settings(screen_size_width)
+#            set screen_size_height $::settings(screen_size_height)
+#
+#        } else {
+#
+#
+#            # A better approach than a pause to wait for the lower panel to move away might be to "bind . <<ViewportUpdate>>" or (when your toplevel is in fullscreen mode) to "bind . <Configure>" and to watch out for "winfo screenheight" in the bound code.
+#            if {$android == 1} {
+#                pause 500
+#            }
+#
+#            set width [winfo screenwidth .]
+#            set height [winfo screenheight .]
+#
+#            if {$width > 2300} {
+#                set screen_size_width 2560
+#                if {$height > 1450} {
+#                    set screen_size_height 1600
+#                } else {
+#                    set screen_size_height 1440
+#                }
+#            } elseif {$height > 2300} {
+#                set screen_size_width 2560
+#                if {$width > 1440} {
+#                    set screen_size_height 1600
+#                } else {
+#                    set screen_size_height 1440
+#                }
+#            } elseif {$width == 2048 && $height == 1440} {
+#                set screen_size_width 2048
+#                set screen_size_height 1440
+#                #set fontm 2
+#            } elseif {$width == 2048 && $height == 1536} {
+#                set screen_size_width 2048
+#                set screen_size_height 1536
+#                #set fontm 2
+#            } elseif {$width == 1920} {
+#                set screen_size_width 1920
+#                set screen_size_height 1080
+#                if {$width > 1080} {
+#                    set screen_size_height 1200
+#                }
+#
+#            } elseif {$width == 1280} {
+#                set screen_size_width 1280
+#                set screen_size_height 800
+#                if {$width >= 720} {
+#                    set screen_size_height 800
+#                } else {
+#                    set screen_size_height 720
+#                }
+#            } else {
+#                # unknown resolution type, go with smallest
+#                set screen_size_width 1280
+#                set screen_size_height 800
+#            }
+#
+#            # only calculate the tablet's dimensions once, then save it in settings for a faster app startup
+#            set ::settings(screen_size_width) $screen_size_width 
+#            set ::settings(screen_size_height) $screen_size_height
+#            save_settings
+#        }
+#
+#        # Android seems to automatically resize fonts appropriately to the current resolution
+#        set fontm $::settings(default_font_calibration)
+#        set ::fontw 1
+#
+#        if {$::undroid == 1} {
+#            # undroid does not resize fonts appropriately for the current resolution, it assumes a 1024 resolution
+#            set fontm [expr {($screen_size_width / 1024.0)}]
+#            set ::fontw 2
+#        }
+#
+#        if {[file exists "skins/default/${screen_size_width}x${screen_size_height}"] != 1} {
+#            set ::rescale_images_x_ratio [expr {$screen_size_height / 1600.0}]
+#            set ::rescale_images_y_ratio [expr {$screen_size_width / 2560.0}]
+#        }
+#
+#        global helvetica_bold_font
+#        global helvetica_font
+#        set global_font_size 18
+#        #puts "setting up fonts for language [language]"
+#        if {[language] == "th"} {
+#            set helvetica_font [sdltk addfont "fonts/sarabun.ttf"]
+#            set helvetica_bold_font [sdltk addfont "fonts/sarabunbold.ttf"]
+#            set fontm [expr {($fontm * 1.2)}]
+#            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
+#            set global_font_size 16
+#        } elseif {[language] == "ar" || [language] == "arb"} {
+#            set helvetica_font [sdltk addfont "fonts/Dubai-Regular.otf"]
+#            set helvetica_bold_font [sdltk addfont "fonts/Dubai-Bold.otf"]
+#            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
+#        } elseif {[language] == "he" || [language] == "heb"} {
+#            set ::globals(listbox_length_multiplier) 1.35
+#            set ::globals(entry_length_multiplier) 0.86
+#            set helvetica_font [sdltk addfont "fonts/hebrew-regular.ttf"]
+#            set helvetica_bold_font [sdltk addfont "fonts/hebrew-bold.ttf"]
+#            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
+#        } elseif {[language] == "zh-hant" || [language] == "zh-hans" || [language] == "kr"} {
+#            set helvetica_font [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
+#            set helvetica_bold_font [lindex [sdltk addfont "fonts/NotoSansCJKjp-Bold.otf"] 0]
+#            set global_font_name $helvetica_font
+#
+#            set fontm [expr {($fontm * .94)}]
+#        } else {
+#            # we use the immense google font so that we can handle virtually all of the world's languages with consistency
+#            set helvetica_font [sdltk addfont "fonts/notosansuiregular.ttf"]
+#            set helvetica_bold_font [sdltk addfont "fonts/notosansuibold.ttf"]
+#            set global_font_name [lindex [sdltk addfont "fonts/NotoSansCJKjp-Regular.otf"] 0]
+#
+#        }            
+#
+#        set fontawesome_brands [lindex [sdltk addfont "fonts/Font Awesome 5 Brands-Regular-400.otf"] 0]
+#        font create Fontawesome_brands_11 -family $fontawesome_brands -size [expr {int($fontm * 20)}]
+#
+#        font create global_font -family $global_font_name -size [expr {int($fontm * $global_font_size)}] 
+#
+#        font create Helv_12_bold -family $helvetica_bold_font -size [expr {int($fontm * 22)}] 
+#        font create Helv_12 -family $helvetica_font -size [expr {int($fontm * 22)}] 
+#        font create Helv_11_bold -family $helvetica_bold_font -size [expr {int($fontm * 20)}] 
+#        font create Helv_11 -family $helvetica_font -size [expr {int($fontm * 20)}] 
+#        font create Helv_10_bold -family $helvetica_bold_font -size [expr {int($fontm * 19)}] 
+#        font create Helv_10 -family $helvetica_font -size [expr {int($fontm * 19)}] 
+#        font create Helv_1 -family $helvetica_font -size 1
+#        font create Helv_4 -family $helvetica_font -size [expr {int($fontm * 8)}]
+#        font create Helv_5 -family $helvetica_font -size [expr {int($fontm * 10)}]
+#        font create Helv_6 -family $helvetica_font -size [expr {int($fontm * 12)}]
+#        font create Helv_6_bold -family $helvetica_bold_font -size [expr {int($fontm * 12)}]
+#        font create Helv_7 -family $helvetica_font -size [expr {int($fontm * 14)}]
+#        font create Helv_7_bold -family $helvetica_bold_font -size [expr {int($fontm * 14)}]
+#        font create Helv_8 -family $helvetica_font -size [expr {int($fontm * 16)}]
+#        font create Helv_8_bold -family $helvetica_bold_font -size [expr {int($fontm * 16)}]
+#        
+#        font create Helv_9 -family $helvetica_font -size [expr {int($fontm * 18)}]
+#        font create Helv_9_bold -family $helvetica_bold_font -size [expr {int($fontm * 18)}] 
+#        font create Helv_15 -family $helvetica_font -size [expr {int($fontm * 24)}] 
+#        font create Helv_15_bold -family $helvetica_bold_font -size [expr {int($fontm * 24)}] 
+#        font create Helv_16_bold -family $helvetica_bold_font -size [expr {int($fontm * 27)}] 
+#        font create Helv_17_bold -family $helvetica_bold_font -size [expr {int($fontm * 30)}] 
+#        font create Helv_18_bold -family $helvetica_bold_font -size [expr {int($fontm * 32)}] 
+#        font create Helv_19_bold -family $helvetica_bold_font -size [expr {int($fontm * 35)}] 
+#        font create Helv_20_bold -family $helvetica_bold_font -size [expr {int($fontm * 37)}]
+#        font create Helv_30_bold -family $helvetica_bold_font -size [expr {int($fontm * 54)}]
+#        font create Helv_30 -family $helvetica_font -size [expr {int($fontm * 56)}]
+#
+#        # enable swipe gesture translating, to scroll through listboxes
+#        # sdltk touchtranslate 1
+#        # disable touch translating as it does not feel native on tablets and is thus confusing
+#        if {$::settings(disable_long_press) != 1 } {        
+#            sdltk touchtranslate 1
+#        } else {
+#            sdltk touchtranslate 0
+#        }
+#
+#        wm maxsize . $screen_size_width $screen_size_height
+#        wm minsize . $screen_size_width $screen_size_height
+#        wm attributes . -fullscreen 1
+#
+#        # flight mode, not yet debugged
+#        #if {$::settings(flight_mode_enable) == 1 } {
+#        #    if {[package require de1plus] > 1} {
+#        #        borg sensor enable 0
+#        #        sdltk accelerometer 1
+#        #        after 200 accelerometer_check 
+#        #    }
+#        #}
+#
+#        # preload the speaking engine 
+#        # john 2/12/18 re-enable this when TTS feature is enabled
+#        # borg speak { }
+#
+#        source "bluetooth.tcl"
+#
+#    } else {
+#
+#        # global font is wider on non-android
+#        set ::globals(listbox_global_width_multiplier) .8
+#        set ::globals(listbox_length_multiplier) 1
+#
+#
+#        expr {srand([clock milliseconds])}
+#
+#        if {$::settings(screen_size_width) != "" && $::settings(screen_size_height) != ""} {
+#            set screen_size_width $::settings(screen_size_width)
+#            set screen_size_height $::settings(screen_size_height)
+#        } else {
+#            # if this is the first time running on Tk, then use a default 1280x800 resolution, and allow changing resolution by editing settings file
+#            set screen_size_width 1280
+#            set screen_size_height 800
+#
+#            set ::settings(screen_size_width) $screen_size_width 
+#            set ::settings(screen_size_height) $screen_size_height
+#            save_settings
+#
+#        }
+#
+#        set fontm [expr {$screen_size_width / 1280.0}]
+#        set ::fontw 2
+#
+#        package require Tk
+#        catch {
+#            # tkblt has replaced BLT in current TK distributions, not on Androwish, they still use BLT and it is preloaded
+#            package require tkblt
+#            namespace import blt::*
+#        }
+#
+#        wm maxsize . $screen_size_width $screen_size_height
+#        wm minsize . $screen_size_width $screen_size_height
+#
+#        if {[file exists "skins/default/${screen_size_width}x${screen_size_height}"] != 1} {
+#            set ::rescale_images_x_ratio [expr {$screen_size_height / 1600.0}]
+#            set ::rescale_images_y_ratio [expr {$screen_size_width / 2560.0}]
+#        }
+#
+#        set regularfont "notosansuiregular"
+#        set boldfont "notosansuibold"
+#
+#        if {[language] == "th"} {
+#            set regularfont "sarabun"
+#            set boldfont "sarabunbold"
+#            #set fontm [expr {($fontm * 1.20)}]
+#        } elseif {[language] == "zh-hant" || [language] == "zh-hans"} {
+#            set regularfont "notosansuiregular"
+#            set boldfont "notosansuibold"
+#        }
+#
+#        set ::helvetica_font $regularfont
+#        font create Helv_1 -family $regularfont -size 1
+#        font create Helv_4 -family $regularfont -size 10
+#        font create Helv_5 -family $regularfont -size 12
+#        font create Helv_6 -family $regularfont -size [expr {int($fontm * 14)}]
+#        font create Helv_6_bold -family $boldfont -size [expr {int($fontm * 14)}]
+#        font create Helv_7 -family $regularfont -size [expr {int($fontm * 16)}]
+#        font create Helv_7_bold -family $boldfont -size [expr {int($fontm * 16)}]
+#        font create Helv_8 -family $regularfont -size [expr {int($fontm * 19)}]
+#        font create Helv_8_bold_underline -family $boldfont -size [expr {int($fontm * 19)}] -underline 1
+#        font create Helv_8_bold -family $boldfont -size [expr {int($fontm * 19)}]
+#        font create Helv_9 -family $regularfont -size [expr {int($fontm * 23)}]
+#        font create Helv_9_bold -family $boldfont -size [expr {int($fontm * 21)}]
+#        font create Helv_10 -family $regularfont -size [expr {int($fontm * 23)}]
+#        font create Helv_10_bold -family $boldfont -size [expr {int($fontm * 23)}]
+#        font create Helv_11 -family $regularfont -size [expr {int($fontm * 25)}]
+#        font create Helv_11_bold -family $boldfont -size [expr {int($fontm * 25)}]
+#        font create Helv_12 -family $regularfont -size [expr {int($fontm * 27)}]
+#        font create Helv_12_bold -family $boldfont -size [expr {int($fontm * 30)}]
+#        font create Helv_15 -family $regularfont -size [expr {int($fontm * 30)}]
+#        font create Helv_15_bold -family $boldfont -size [expr {int($fontm * 30)}]
+#        font create Helv_16_bold -family $boldfont -size [expr {int($fontm * 33)}]
+#        font create Helv_17_bold -family $boldfont -size [expr {int($fontm * 37)}]
+#        font create Helv_18_bold -family $boldfont -size [expr {int($fontm * 40)}]
+#        font create Helv_19_bold -family $boldfont -size [expr {int($fontm * 45)}]
+#        font create Helv_20_bold -family $boldfont -size [expr {int($fontm * 48)}]
+#        font create Helv_30_bold -family $boldfont -size [expr {int($fontm * 69)}]
+#        font create Helv_30 -family $regularfont -size [expr {int($fontm * 72)}]
+#
+#        
+#        font create Fontawesome_brands_11 -family "Font Awesome 5 Brands Regular" -size [expr {int($fontm * 25)}]
+#
+#
+#        font create global_font -family "Noto Sans CJK JP" -size [expr {int($fontm * 23)}] 
+#        android_specific_stubs
+#        source "bluetooth.tcl"
+#    }
+#
+#    # define the canvas
+#    . configure -bg black 
+#    canvas .can -width $screen_size_width -height $screen_size_height -borderwidth 0 -highlightthickness 0
+#
+#    after 60000 schedule_minute_task
+#    #after 1000 schedule_minute_task
+#
+#    ############################################
+#    # future feature: flight mode
+#    #if {$::settings(flight_mode_enable) == 1} {
+#        #if {$android == 1} {
+#        #   .can bind . "<<SensorUpdate>>" [accelerometer_data_read]
+#        #}
+#        #after 250 accelerometer_check
+#    #}
+#
+#    ############################################
 }
 
+
+proc off_page_onload { page_to_hide page_to_show } {
+	if {$page_to_hide == "sleep" && $page_to_show == "off"} {
+		msg [namespace current] "discarding intermediate sleep/off state msg"
+		return 0 
+	}	
+}
+
+proc saver_page_onload { page_to_hide page_to_show } {
+	if {[ifexists ::exit_app_on_sleep] == 1} {
+		get_set_tablet_brightness 0
+		close_all_ble_and_exit
+	} else {
+		if {$::settings(screen_saver_change_interval) == 0} {
+			# black screen saver
+			display_brightness 0
+		} else {
+			display_brightness $::settings(saver_brightness)
+		}
+		borg systemui $::android_full_screen_flags 
+	}
+}
+
+
+proc page_onload { page_to_hide page_to_show } {
+	if {$page_to_show ne "saver" } {
+		display_brightness $::settings(app_brightness)
+	}
+	
+	if {$::settings(stress_test) == 1 && $::de1_num_state($::de1(state)) == "Idle" && [info exists ::idle_next_step] == 1} {		
+		msg "Doing next stress test step: '$::idle_next_step '"
+		set todo $::idle_next_step 
+		unset -nocomplain ::idle_next_step 
+		eval $todo
+	}
+}
+
+
 proc check_if_battery_low_and_give_message {} {
-    #msg "check_if_battery_low_and_give_message [battery_percent]"
     if {[battery_percent] < 10 && $::android == 1} {
         info_page [subst {[translate "We noticed that your battery power is very low."]\n\n[translate "Maybe you are turning your DE1 off using the power switch on the back?"]\n\n[translate "If so, that prevents the tablet from charging."]\n\n[translate "Instead, put the DE1 to sleep by tapping the power icon in the App."]}] [translate "Ok"]
     }
@@ -342,14 +517,45 @@ proc battery_percent {} {
         set percent 100
     }
 
-    #msg "battery_percent: $percent"
-
     return $percent
 }
 
+proc battery_state {} {
+
+    array set powerinfo [sdltk powerinfo]
+    set state [ifexists powerinfo(state)]
+    if {$state == ""} {
+        set state "~"
+    }
+
+    return $state
+}
+
+proc check_battery_charger {} {
+
+    set percent [battery_percent]
+
+    #####################
+    # keep battery charged between 40% and 60%
+	if {$::settings(smart_battery_charging) == 1} {
+	    if {$percent <= 55} {
+			# turn USB charger on
+			set_usb_charger_on 1
+	    } elseif {$percent >= 65} {
+			# turn USB charger off
+			set_usb_charger_on 0
+	    }
+    } else {
+		set_usb_charger_on 1
+    }
+
+}
 
 # dim the screen automaticaly if the battery is low
 proc check_battery_low {brightness_to_use} {
+
+	puts check_battery_low
+
     set current_brightness [get_set_tablet_brightness]
     if {$current_brightness == ""} {
         set current_brightness 100
@@ -357,31 +563,32 @@ proc check_battery_low {brightness_to_use} {
         set current_brightness [expr {abs($current_brightness)}]
     }
 
-    #return 100
+    
     set percent [battery_percent]
 
-    #puts "check_battery_low: $brightness_to_use / borg brightness = [borg brightness] / powerinfo(percent) = [ifexists powerinfo(percent)]"
-    if {$percent < $::settings(battery_very_low_trigger)} {
+    #####################
+
+    if {$percent < $::settings(battery_very_low_trigger_v2)} {
         if {$current_brightness > $::settings(battery_very_low_brightness)} {
             get_set_tablet_brightness $::settings(battery_very_low_brightness)
-            msg "Battery is very low ($percent < $::settings(battery_very_low_trigger)) so lowering screen to $::settings(battery_very_low_brightness)"
+            msg -WARNING "Battery is very low ($percent < $::settings(battery_very_low_trigger)) so lowering screen to $::settings(battery_very_low_brightness)"
         }
         if {$brightness_to_use > $::settings(battery_very_low_brightness)} {
             return $::settings(battery_very_low_brightness)
         }
-    } elseif {$percent < $::settings(battery_low_trigger)} {
+    } elseif {$percent < $::settings(battery_low_trigger_v2)} {
         if {$current_brightness > $::settings(battery_low_brightness)} {
             get_set_tablet_brightness $::settings(battery_low_brightness)
-            msg "Battery is low ($percent < $::settings(battery_low_trigger)) so lowering screen to $::settings(battery_low_brightness)"
+            msg -WARNING "Battery is low ($percent < $::settings(battery_low_trigger)) so lowering screen to $::settings(battery_low_brightness)"
         }
         if {$brightness_to_use > $::settings(battery_low_brightness)} {
             return $::settings(battery_low_brightness)
         }
         #return $brightness_to_use
-    } elseif {$percent < $::settings(battery_medium_trigger)} {
+    } elseif {$percent < $::settings(battery_medium_trigger_v2)} {
         if {$current_brightness > $::settings(battery_medium_brightness)} {
             get_set_tablet_brightness $::settings(battery_medium_brightness)
-            msg "Battery is medium ($percent < $::settings(battery_medium_trigger)) so lowering screen to $::settings(battery_medium_brightness)"
+            msg -NOTICE "Battery is medium ($percent < $::settings(battery_medium_trigger)) so lowering screen to $::settings(battery_medium_brightness)"
         }
         if {$brightness_to_use > $::settings(battery_medium_brightness)} {
             return $::settings(battery_medium_brightness)
@@ -393,10 +600,9 @@ proc check_battery_low {brightness_to_use} {
 }
 
 proc schedule_minute_task {} {
-    
-    check_battery_low 100
+    check_battery_charger
+    check_battery_low $::settings(app_brightness)
     after 60000 schedule_minute_task
-    #after 1000 schedule_minute_task
 
 }
 
@@ -428,30 +634,54 @@ proc stackprocs {} {
     return $stack
 }
 
-proc stacktrace {} {
-    set stack "Stack trace:\n"
-    for {set i 1} {$i < [info level]} {incr i} {
-        set lvl [info level -$i]
-        set pname [lindex $lvl 0]
-        append stack [string repeat " " $i]$pname
-        foreach value [lrange $lvl 1 end] arg [info args $pname] {
-            catch {
-                if {$value eq ""} {
-                    info default $pname $arg value
-                }
-                append stack " $arg='$value'"
-            }
-        }
-        append stack \n
-    }
-    return $stack
+proc stacktrace {args} {
+
+	set label_args [expr { "-label_args" in $args }]
+
+	# Original code apparently from https://wiki.tcl-lang.org/page/List+the+call+stack
+	# Notes there suggest that there are also problems with namespaces with the implementation
+	# (This concern is not resolved at this time)
+
+	set stack "Stack trace:\n"
+
+	for {set i 1} {$i < [info level]} {incr i} {
+
+		set level [info level -$i]
+		set frame [info frame -$i]
+
+		append stack [string repeat " " $i]
+
+		if { ! $label_args } {
+
+			append stack $level
+
+		} else {
+			set pname [lindex $lvl 0]
+			if { [info proc $pname] } {
+				append stack $pname
+				foreach value [lrange $lvl 1 end] arg [info args $pname] {
+					catch {
+						if {$value eq ""} {
+							info default $pname $arg value
+						}
+						append stack " $arg='$value'"
+					}
+				}
+
+			} else {
+
+				append stack $lvl
+			}
+		}
+		append stack \n
+	}
+	return $stack
 }
 
 proc random_saver_file {} {
 
 
     if {[info exists ::saver_files_cache] != 1} {
-        #puts "building saver_files_cache"
         set ::saver_files_cache {}
  
         set savers {}
@@ -471,19 +701,20 @@ proc random_saver_file {} {
             foreach fn [glob -nocomplain "[saver_directory]/2560x1600/*.jpg"] {
                 borg toast [subst {[translate "Resizing image"]\n\n[file tail $fn]}]
                 borg spinner on
-                msg "random_saver_file image create photo saver -file $fn"
+                msg -DEBUG "random_saver_file image create photo saver -file $fn"
                 image create photo saver -file $fn
                 photoscale saver $rescale_images_y_ratio $rescale_images_x_ratio
 
                 set resized_filename "[saver_directory]/${::screen_size_width}x${::screen_size_height}/[file tail $fn]"
-                puts "saving resized image to: $resized_filename"
+                msg -DEBUG  "saving resized image to: $resized_filename"
                 borg spinner off
 
                 saver write $resized_filename   -format {jpeg -quality 50}
             }
         }
 
-        set ::saver_files_cache [glob -nocomplain "[saver_directory]/${::screen_size_width}x${::screen_size_height}/*.jpg"]
+	set saver_path "[saver_directory]/${::screen_size_width}x${::screen_size_height}/"
+        set ::saver_files_cache [glob -nocomplain -path $saver_path {*.[Jj][Pp][Gg]}]
 
          if {$::settings(screen_saver_change_interval) == 0} {
             # remove all other savers if we are only showing the black one
@@ -499,6 +730,7 @@ proc random_saver_file {} {
 }
 
 proc tcl_introspection {} {
+
     catch {
         set txt ""
 
@@ -509,7 +741,7 @@ proc tcl_introspection {} {
             set acnt 0
             foreach a [after info] {
                 incr acnt
-                append txt "$acnt - " [after info $a]\n"
+                append txt "$acnt -  [after info $a]\n"
             }
         }
 
@@ -561,18 +793,53 @@ proc tcl_introspection {} {
         }
         append txt "TOTAL global variable memory used: $total bytes\n\n"
 
+		if {$::enable_profiling == 1} {
 
-        msg $txt
+			# this loads the overall app info
+			append txt [profilerdata]
+
+			# this gives you profiled run information about individual functions
+			# feel free to change these to those you are investigating
+			append txt [profilerdata ::load_skin]
+			append txt [profilerdata ::add_de1_text]
+			append txt [profilerdata ::add_de1_variable]
+			append txt [profilerdata ::de1_ble_handler]
+			append txt [profilerdata ::device::scale::process_weight_update]
+		}
+
+        msg -INFO $txt
     }
 
     after [expr {60 * 60 * 1000}] tcl_introspection
     #after [expr {1000}] tcl_introspection
 }
 
+proc add_commas_to_number { number } {
+	regsub -all \\d(?=(\\d{3})+([regexp -inline {\.\d*$} $number]$)) $number {\0,}
+}
+
+proc array_keys_decr_sorted_by_number_val {arrname {sort_order -decreasing}} {
+	upvar $arrname arr
+	foreach k [array names arr] {
+		#puts " $arr($k) "
+		set k2 "[format {"%0.12i"} $arr($k)] $k"
+		#puts "k2: $k2"
+		set t($k2) $k
+	}
+	
+	set toreturn {}
+	foreach k [lsort -dictionary $sort_order [array names t]] {
+		set v $t($k)
+		lappend toreturn $v
+	}
+	return $toreturn
+}
+
+
+
 proc random_splash_file {} {
     if {[info exists ::splash_files_cache] != 1} {
 
-        #puts "building splash_files_cache"
         set ::splash_files_cache {}
  
         set savers {}
@@ -590,12 +857,12 @@ proc random_splash_file {} {
             foreach fn [glob -nocomplain "[splash_directory]/2560x1600/*.jpg"] {
                 borg toast [subst {[translate "Resizing image"]\n\n[file tail $fn]}]
                 borg spinner on
-                msg "random_splash_file image create photo saver -file $fn"
+                msg -DEBUG "random_splash_file image create photo saver -file $fn"
                 image create photo saver -file $fn
                 photoscale saver $rescale_images_y_ratio $rescale_images_x_ratio
 
                 set resized_filename "[splash_directory]/${::screen_size_width}x${::screen_size_height}/[file tail $fn]"
-                puts "saving resized image to: $resized_filename"
+                msg -DEBUG "saving resized image to: $resized_filename"
                 borg spinner off
                 saver write $resized_filename   -format {jpeg -quality 50}
             }
@@ -610,7 +877,7 @@ proc random_splash_file {} {
 
 proc random_splash_file_obs {} {
     if {[info exists ::splash_files_cache] != 1} {
-        puts "building splash_files_cache"
+	msg -DEBUG "building splash_files_cache"
         set ::splash_files_cache {}
         if {[file exists "[splash_directory]/${::screen_size_width}x${::screen_size_height}/"] == 1} {
             set files [glob -nocomplain "[splash_directory]/${::screen_size_width}x${::screen_size_height}/*.jpg"]
@@ -625,7 +892,7 @@ proc random_splash_file_obs {} {
             }
         }
         borg spinner off
-        puts "savers: $::splash_files_cache"
+        msg -INFO "savers: $::splash_files_cache"
 
     }
 
@@ -726,8 +993,6 @@ proc translate {english} {
         return $english
     }
 
-    #puts "lang: '[language]'"
-
     global translation
 
     if {[info exists translation($english)] == 1} {
@@ -735,13 +1000,9 @@ proc translate {english} {
         array set available $translation($english)
         if {[info exists available([language])] == 1} {
             # this word has been translated into the desired non-english language
-            #puts "$available([language])"
 
-            #puts "translate: '[encoding convertfrom $available([language])]'"
             if {[ifexists available([language])] != ""} {
                 # if the translated version of the English is NOT blank, return it
-                #log_to_debug_file [encoding names]
-                #log_to_debug_file "English: '$available([language])'"
                 if {[language] == "ar" && ($::android == 1 || $::undroid == 1)} {
                     # use the "arb" column on Android/Undroid because they do not correctly right-to-left text like OSX does
                     if {[ifexists available(arb)] != ""} {
@@ -773,9 +1034,9 @@ proc translate {english} {
                 append t [subst {$l "$english" }]
             }
             append t "\}"
-            puts "Appending new phrase: $english"
-            msg [stacktrace]
-            append_file "[homedir]/translation.tcl" $t
+            msg -NOTICE "Appending new phrase: '$english' to [homedir]/translation.tcl"
+            append_file "[homedir]/translation.tcl" [encoding convertto utf-8 $t]
+
             set ::already_shown_trans($english) 1
         }
     }
@@ -794,7 +1055,6 @@ proc skin_directory {} {
         #set skindir "skinscreator"
     #}
 
-    #puts "skind: $skindir"
     #set dir "[file dirname [info script]]/$skindir/default/${screen_size_width}x${screen_size_height}"
     set dir "[homedir]/$skindir/$::settings(skin)"
     return $dir
@@ -802,18 +1062,16 @@ proc skin_directory {} {
 
 proc android_specific_stubs {} {
 
-    proc ble {args} { msg "ble $args"; return 1 }
+    proc ble {args} { msg -DEBUG "ble $args"; return 1 }
     
     if {$::android != 1 && $::undroid != 1} {
         proc sdltk {args} {
             if {[lindex $args 0] == "powerinfo"} {
-                #msg "sdltk powerinfo"
                 return [list "percent" 75]
             } elseif {[lindex $args 0] == "textinput"} {
-                #msg "sdltk textinput"
                 return 0
             } else {
-                msg "unknown sdktk comment: '$args'"
+                msg -ERROR "unknown sdktk comment: '$args'"
             }
         }
     }
@@ -832,16 +1090,16 @@ proc android_specific_stubs {} {
         } elseif {[lindex $args 0] == "spinner"} {
             # do nothing
         } elseif {[lindex $args 0] == "toast"} {
-            puts "screen popup message: '$args'"
+            msg -NOTICE "screen popup message: '$args'"
         } elseif {[lindex $args 0] == "brightness"} {
             if {[lindex $args 1] == ""} {
                 return 70
             } else {
-                msg "borg $args"
+                msg -DEBUG "borg $args"
             }
 
         } else {
-            puts "unknown 'borg $args'"
+            msg -ERROR "unknown 'borg $args'"
         }
     }
 }
@@ -856,23 +1114,28 @@ proc get_set_tablet_brightness { {setting ""} } {
     # only call the Android setting if the setting needs to be changed.
     if {$actual != $setting} {
         borg brightness $setting
+
+        # hide the bar that is made visible by changing brightness
+        borg systemui $::android_full_screen_flags
+
     }
 }
 
 
-proc settings_directory_graphics {} {
-    
-    global screen_size_width
-    global screen_size_height
-
-    set settingsdir "[homedir]/skins"
-    set dir "$settingsdir/$::settings(skin)/${screen_size_width}x${screen_size_height}"
-    
-    if {[info exists ::rescale_images_x_ratio] == 1} {
-        set dir "$settingsdir/$::settings(skin)/2560x1600"
-    }
-    return $dir
-}
+# Enrique: Not used anywhere in the code as of 25/06/2021, image directories now managed by DUI, so commenting 
+#proc settings_directory_graphics {} {
+#    
+#    global screen_size_width
+#    global screen_size_height
+#
+#    set settingsdir "[homedir]/skins"
+#    set dir "$settingsdir/$::settings(skin)/${screen_size_width}x${screen_size_height}"
+#    
+#    if {[info exists ::rescale_images_x_ratio] == 1} {
+#        set dir "$settingsdir/$::settings(skin)/2560x1600"
+#    }
+#    return $dir
+#}
 
 proc skin_directory_graphics {} {
     global screen_size_width
@@ -887,13 +1150,11 @@ proc skin_directory_graphics {} {
     #    set skindir "[homedir]/skinscreator"
     #}
 
-    #puts "skind: $skindir"
     set dir "$skindir/$::settings(skin)/${screen_size_width}x${screen_size_height}"
 
     if {[info exists ::rescale_images_x_ratio] == 1} {
         set dir "$skindir/$::settings(skin)/2560x1600"
     }
-    #puts "skindir '$skindir'"
     #set dir "[file dirname [info script]]/$skindir/default"
     return $dir
 }
@@ -913,13 +1174,11 @@ proc defaultskin_directory_graphics {} {
     #    set skindir "[homedir]/skinscreator"
     #}
 
-    #puts "skind: $skindir"
     set dir "$skindir/default/${screen_size_width}x${screen_size_height}"
     
     if {[info exists ::rescale_images_x_ratio] == 1} {
         set dir "$skindir/default/2560x1600"
     }
-    #puts "skindir '$skindir'"
     #set dir "[file dirname [info script]]/$skindir/default"
     return $dir
 }
@@ -972,7 +1231,6 @@ proc accelerometer_data_read {} {
     #   set xvalue [lindex [lindex $a 11] 0]
     #   lappend reads $xvalue
     #}
-    #msg "reads: $reads"
 
     #set a [borg sensor get 0]
     #set a 
@@ -982,7 +1240,6 @@ proc accelerometer_data_read {} {
     mean_accelbuffer
     set xvalue $::ACCEL(e3)
 
-    #msg "xvalue : $xvalue $::ACCEL(e1) $::ACCEL(e2) $::ACCEL(e3)"
 
     return $xvalue;
 
@@ -1038,7 +1295,6 @@ proc accelerometer_check {} {
             set ::settings(flying) 0
             start_idle
         }
-        #msg "accelerometer angle: $angle"
     }
     after 200 accelerometer_check
 }
@@ -1046,29 +1302,39 @@ proc accelerometer_check {} {
 
 
 proc say {txt sndnum} {
+	# Handle the old hardcoded numbers associated  to sound files
+	if {$sndnum == 8} {
+		set sound_name button_in
+	} elseif {$sndnum == 11} {
+		set sound_name button_out
+	} else {
+		set sound_name $sndnum
+	}
 
-    if {$::android != 1} {
-        #return
-    }
-
-    if {$::settings(enable_spoken_prompts) == 1 && $txt != ""} {
-        borg speak $txt {} $::settings(speaking_pitch) $::settings(speaking_rate)
-    } else {
-        catch {
-            # sounds from https://android.googlesource.com/platform/frameworks/base/+/android-5.0.0_r2/data/sounds/effects/ogg?autodive=0%2F%2F%2F%2F%2F%2F
-            set path ""
-            if {$sndnum == 8} {
-                #set path "/system/media/audio/ui/KeypressDelete.ogg"
-                #set path "file://mnt/sdcard/de1beta/KeypressStandard_120.ogg"
-                set path "sounds/KeypressStandard_120.ogg"
-            } elseif {$sndnum == 11} {
-                #set path "/system/media/audio/ui/KeypressStandard.ogg"
-                set path "sounds/KeypressDelete_120.ogg"
-            }
-            borg beep $path
-            #borg beep $sounds($sndnum)
-        }
-    }
+	dui say $txt $sound_name
+	
+#    if {$::android != 1} {
+#        #return
+#    }
+#
+#    if {$::settings(enable_spoken_prompts) == 1 && $txt != ""} {
+#        borg speak $txt {} $::settings(speaking_pitch) $::settings(speaking_rate)
+#    } else {
+#        catch {
+#            # sounds from https://android.googlesource.com/platform/frameworks/base/+/android-5.0.0_r2/data/sounds/effects/ogg?autodive=0%2F%2F%2F%2F%2F%2F
+#            set path ""
+#            if {$sndnum == 8} {
+#                #set path "/system/media/audio/ui/KeypressDelete.ogg"
+#                #set path "file://mnt/sdcard/de1beta/KeypressStandard_120.ogg"
+#                set path "sounds/KeypressStandard_120.ogg"
+#            } elseif {$sndnum == 11} {
+#                #set path "/system/media/audio/ui/KeypressStandard.ogg"
+#                set path "sounds/KeypressDelete_120.ogg"
+#            }
+#            borg beep $path
+#            #borg beep $sounds($sndnum)
+#        }
+#    }
 }
 
 
@@ -1076,12 +1342,13 @@ proc append_file {filename data} {
     set success 0
     set errcode [catch {
         set fn [open $filename a]
-        puts $fn $data 
+        fconfigure $fn -translation binary
+        puts $fn $data
         close $fn
         set success 1
     }]
     if {$errcode != 0} {
-        msg "append_file $::errorInfo"
+        msg -ERROR "append_file $::errorInfo"
     }
     return $success
 }
@@ -1132,12 +1399,12 @@ proc save_settings {} {
 
             set sv [ifexists ::settings_saved($k)]
             if {$sv != $v} {
-                msg "New setting: '$k' = '$v' (was '$sv')"
+                msg -DEBUG "New setting: '$k' = '$v' (was '$sv')"
             }
         }
     }
 
-    msg "saving settings: [stacktrace]"
+    msg -INFO "saving settings"
     save_array_to_file ::settings [settings_filename]
 
     catch {
@@ -1150,8 +1417,6 @@ proc save_settings {} {
 
 proc load_settings {} {
 
-
-    #puts "loading settings XXXXXXX"
 
     set osbuildinfo_string [borg osbuildinfo]
 
@@ -1172,7 +1437,7 @@ proc load_settings {} {
     } else {
         array set ::settings $settings_file_contents
 
-        msg "OS build info: $osbuildinfo_string"
+        msg -NOTICE "OS build info: $osbuildinfo_string"
 
     }
 
@@ -1206,8 +1471,21 @@ proc load_settings {} {
         set ::settings(scale_type) "atomaxskale"
     }
 
+    # Transitional for v1.35 where this adjustment became relative to expected delay
+    # There is no physical reason for this limit, only to assist users upgrading
 
-    blt::vector create espresso_elapsed god_espresso_elapsed god_espresso_pressure steam_pressure steam_temperature steam_flow steam_elapsed espresso_pressure espresso_flow god_espresso_flow espresso_flow_weight god_espresso_flow_weight espresso_flow_weight_2x god_espresso_flow_weight_2x espresso_flow_2x god_espresso_flow_2x espresso_flow_delta espresso_pressure_delta espresso_temperature_mix espresso_temperature_basket god_espresso_temperature_basket espresso_state_change espresso_pressure_goal espresso_flow_goal espresso_flow_goal_2x espresso_temperature_goal espresso_weight espresso_weight_chartable espresso_resistance_weight espresso_resistance
+    if {[ifexists ::settings(stop_weight_before_seconds)] > 1.5 } {
+        set ::settings(stop_weight_before_seconds) 0.15
+    }
+
+    # Starting with v1.35, logging is always enabled
+    # Variable may be accessed by skins, retain at this time
+    # Variable is a placebo, there is no check in ::logging
+
+    set ::settings(log_enabled) True
+
+
+    blt::vector create espresso_elapsed god_espresso_elapsed god_espresso_pressure steam_pressure steam_temperature steam_temperature100th steam_flow steam_flow_goal steam_elapsed espresso_pressure espresso_flow god_espresso_flow espresso_flow_weight god_espresso_flow_weight espresso_flow_weight_2x god_espresso_flow_weight_2x espresso_flow_2x god_espresso_flow_2x espresso_flow_delta espresso_pressure_delta espresso_temperature_mix espresso_temperature_basket god_espresso_temperature_basket espresso_state_change espresso_pressure_goal espresso_flow_goal espresso_flow_goal_2x espresso_temperature_goal espresso_weight espresso_weight_chartable espresso_resistance_weight espresso_resistance
     blt::vector create espresso_de1_explanation_chart_pressure espresso_de1_explanation_chart_flow espresso_de1_explanation_chart_elapsed espresso_de1_explanation_chart_elapsed_flow espresso_water_dispensed espresso_flow_weight_raw espresso_de1_explanation_chart_temperature  espresso_de1_explanation_chart_temperature_10 espresso_de1_explanation_chart_selected_step
     blt::vector create espresso_de1_explanation_chart_flow_1 espresso_de1_explanation_chart_elapsed_flow_1 espresso_de1_explanation_chart_flow_2 espresso_de1_explanation_chart_elapsed_flow_2 espresso_de1_explanation_chart_flow_3 espresso_de1_explanation_chart_elapsed_flow_3
     blt::vector create espresso_de1_explanation_chart_elapsed_1 espresso_de1_explanation_chart_elapsed_2 espresso_de1_explanation_chart_elapsed_3 espresso_de1_explanation_chart_pressure_1 espresso_de1_explanation_chart_pressure_2 espresso_de1_explanation_chart_pressure_3
@@ -1221,28 +1499,29 @@ proc load_settings {} {
     #espresso_temperature_goal append [expr {$::settings(espresso_temperature) - 5}]
     #espresso_elapsed append 0    
     clear_espresso_chart
-
-    
-
 }
 
 proc skin_xscale_factor {} {
-    global screen_size_width
-    return [expr {2560.0/$screen_size_width}]
+	return [dui platform xscale_factor]	
+#    global screen_size_width
+#    return [expr {2560.0/$screen_size_width}]
 }
 
 proc skin_yscale_factor {} {
-    global screen_size_height
-    return [expr {1600.0/$screen_size_height}]
+	return [dui platform yscale_factor]
+#    global screen_size_height
+#    return [expr {1600.0/$screen_size_height}]
 }
 
 proc rescale_x_skin {in} {
+	return [dui platform rescale_x $in]
     #puts "rescale_x_skin $in / [skin_xscale_factor]"
-    return [expr {int($in / [skin_xscale_factor])}]
+    #return [expr {int($in / [skin_xscale_factor])}]
 }
 
 proc rescale_y_skin {in} {
-    return [expr {int($in / [skin_yscale_factor])}]
+	return [dui platform rescale_y $in]
+#    return [expr {int($in / [skin_yscale_factor])}]
 }
 
 proc rescale_font {in} {
@@ -1260,13 +1539,12 @@ proc skin_convert_all {} {
 }
 
 proc skin_convert {indir} {
-    #puts "skin_convert: $indir"
     set pwd [pwd]
     cd $indir
     set skinfiles [concat [glob -nocomplain "*.png"] [glob -nocomplain  "*.jpg"]]
 
     if {$skinfiles == ""} {
-        puts "No jpg files found in '$indir'"
+        msg -DEBUG "No jpg files found in '$indir'"
         return
     }
 
@@ -1286,14 +1564,12 @@ proc skin_convert {indir} {
 
     # convert all the skin PNG files
     foreach {dir xdivisor ydivisor} $dirs {
-        #puts -nonewline "Making $dir skin $xdivisor / $ydivisor"
         set started 0
 
 
         foreach skinfile $skinfiles {
             if {[file exists "../$dir/$skinfile"] == 1} {
                 if {[file mtime $skinfile] < [file mtime "../$dir/$skinfile"]} {
-                    #puts "skipping $skinfile [file exists "../$dir/$skinfile"]"
                     # skip files that have not been modified.
                     continue
                 }
@@ -1301,12 +1577,12 @@ proc skin_convert {indir} {
 
             if {$started == 0} {
                 set started 1
-                puts -nonewline "Making $dir skin $indir"
+                msg -DEBUG "skin_convert: Making $dir skin $indir"
             }
 
             file mkdir ../$dir
 
-            puts -nonewline "/$skinfile"
+            msg -DEBUG "skin_convert: /$skinfile"
             flush stdout
             if {[file extension $skinfile] == ".png"} {
                 catch {
@@ -1314,7 +1590,7 @@ proc skin_convert {indir} {
                     exec convert $skinfile -strip -resize $dir!   ../$dir/$skinfile 
                     
                     # additional optional PNG compression step 
-                    puts "zopflipng: $skinfile"
+		    msg -DEBUG "skin_convert:" "zopflipng: $skinfile"
                     #exec zopflipng -q --iterations=1 -y   ../$dir/$skinfile   ../$dir/$skinfile 
                     exec zopflipng -m --iterations=1 -y   ../$dir/$skinfile   ../$dir/$skinfile 
 
@@ -1325,7 +1601,7 @@ proc skin_convert {indir} {
 
                 catch {
                     exec convert $skinfile -resize $dir!  -quality 90 ../$dir/$skinfile 
-                    puts "\nconvert $skinfile -resize $dir!  -quality 90 ../$dir/$skinfile "
+                    msg -DEBUG "skin_convert:" "convert $skinfile -resize $dir!  -quality 90 ../$dir/$skinfile "
                 }
                 if {$skinfile == "icon.jpg"} {
                     # icon files are reduced to 25% of the screen resolution
@@ -1335,16 +1611,9 @@ proc skin_convert {indir} {
                 }
             }
         }
-
-
-        if {$started != 0} {
-            puts "";
-        }
-
     }
 
     cd $pwd
-
 }
 
 
@@ -1362,48 +1631,53 @@ proc round_date_to_nearest_day {now} {
 
 # from Barney  https://3.basecamp.com/3671212/buckets/7351439/documents/2208672342#__recording_2349428596
 proc load_font {name fn pcsize {androidsize {}} } {
-    # calculate font size
-    set familyname ""
-
-    if {($::android == 1 || $::undroid == 1) && $androidsize != ""} {
-        set pcsize $androidsize
-    }
-    set platform_font_size [expr {int(1.0 * $::fontm * $pcsize)}]
-
-    if {[language] == "zh-hant" || [language] == "zh-hans"} {
-        set fn ""
-        set familyname $::helvetica_font
-    } elseif {[language] == "th"} {
-        set fn "[homedir]/fonts/sarabun.ttf"
-    }
-
-    if {[info exists ::loaded_fonts] != 1} {
-        set ::loaded_fonts list
-    }
-    set fontindex [lsearch $::loaded_fonts $fn]
-    if {$fontindex != -1} {
-        set familyname [lindex $::loaded_fonts [expr $fontindex + 1]]
-    } elseif {($::android == 1 || $::undroid == 1) && $fn != ""} {
-        catch {
-            set familyname [lindex [sdltk addfont $fn] 0]
-        }
-
-        if {$familyname == ""} {
-            msg "Unable to get familyname from 'sdltk addfont $fn'"
-        } else {
-            lappend ::loaded_fonts $fn $familyname
-        }
-    }
-
-    if {[info exists familyname] != 1 || $familyname == ""} {
-        msg "Font familyname not available; using name '$name'."
-        set familyname $name
-    }
-
-    catch {
-        font create $name -family $familyname -size $platform_font_size
-    }
-    msg "added font name: \"$name\" family: \"$familyname\" size: $platform_font_size filename: \"$fn\""
+#	if { $androidsize ne "" } {
+#		msg -WARNING "BEWARE load_font with non-empty androidsize"
+#	}
+	return [dui font load $fn $pcsize -name $name]
+	
+#    # calculate font size
+#    set familyname ""
+#
+#    if {($::android == 1 || $::undroid == 1) && $androidsize != ""} {
+#        set pcsize $androidsize
+#    }
+#    set platform_font_size [expr {int(1.0 * $::fontm * $pcsize)}]
+#
+#    if {[language] == "zh-hant" || [language] == "zh-hans"} {
+#        set fn ""
+#        set familyname $::helvetica_font
+#    } elseif {[language] == "th"} {
+#        set fn "[homedir]/fonts/sarabun.ttf"
+#    }
+#
+#    if {[info exists ::loaded_fonts] != 1} {
+#        set ::loaded_fonts list
+#    }
+#    set fontindex [lsearch $::loaded_fonts $fn]
+#    if {$fontindex != -1} {
+#        set familyname [lindex $::loaded_fonts [expr $fontindex + 1]]
+#    } elseif {($::android == 1 || $::undroid == 1) && $fn != ""} {
+#        catch {
+#            set familyname [lindex [sdltk addfont $fn] 0]
+#        }
+#
+#        if {$familyname == ""} {
+#            msg "Unable to get familyname from 'sdltk addfont $fn'"
+#        } else {
+#            lappend ::loaded_fonts $fn $familyname
+#        }
+#    }
+#
+#    if {[info exists familyname] != 1 || $familyname == ""} {
+#        msg "Font familyname not available; using name '$name'."
+#        set familyname $name
+#    }
+#
+#    catch {
+#        font create $name -family $familyname -size $platform_font_size
+#    }
+#    msg "added font name: \"$name\" family: \"$familyname\" size: $platform_font_size filename: \"$fn\""
 }
 
 # Barney writes: https://3.basecamp.com/3671212/buckets/7351439/documents/2208672342#__recording_2349428596
@@ -1411,36 +1685,41 @@ proc load_font {name fn pcsize {androidsize {}} } {
 # Here's the syntax for using the get_font function in a call to add_de1_text:
 # add_de1_text "off" 100 100 -text "Hi!" -font [get_font "Comic Sans" 12] 
 proc get_font { font_name size } {
-    if {[info exists ::skin_fonts] != 1} {
-        set ::skin_fonts list
-    }
-
-    set font_key "$font_name $size"
-    set font_index [lsearch $::skin_fonts $font_key]
-    if {$font_index == -1} {
-        # load the font if needed. 
-
-        # support for both OTF and TTF files
-        if {[file exists "[skin_directory]/fonts/$font_name.otf"] == 1} {
-            load_font $font_key "[skin_directory]/fonts/$font_name.otf" $size
-            lappend ::skin_fonts $font_key
-        } elseif {[file exists "[skin_directory]/fonts/$font_name.ttf"] == 1} {
-            load_font $font_key "[skin_directory]/fonts/$font_name.ttf" $size
-            lappend ::skin_fonts $font_key
-        } else {
-            msg "Unable to load font '$font_key'"
-        }
-    }
-
-    return $font_key
+	return [dui font get $font_name $size]
+    
+#	if {[info exists ::skin_fonts] != 1} {
+#        set ::skin_fonts list
+#    }
+#
+#    set font_key "$font_name $size"
+#    set font_index [lsearch $::skin_fonts $font_key]
+#    if {$font_index == -1} {
+#        # load the font if needed. 
+#
+#        # support for both OTF and TTF files
+#        if {[file exists "[skin_directory]/fonts/$font_name.otf"] == 1} {
+#            load_font $font_key "[skin_directory]/fonts/$font_name.otf" $size
+#            lappend ::skin_fonts $font_key
+#        } elseif {[file exists "[skin_directory]/fonts/$font_name.ttf"] == 1} {
+#            load_font $font_key "[skin_directory]/fonts/$font_name.ttf" $size
+#            lappend ::skin_fonts $font_key
+#        } else {
+#            msg "Unable to load font '$font_key'"
+#        }
+#    }
+#
+#    return $font_key
 }
 
 proc load_font_obsolete {name fn pcsize {androidsize {}} } {
+
+	msg -WARNING "Unexpected use of load_font_obsolete [stacktrace]"
+
     if {$androidsize == ""} {
         set androidsize $pcsize
     }
 
-    puts "loadfont: [language]"
+    msg -DEBUG "loadfont: [language]"
  
     if {[language] == "zh-hant" || [language] == "zh-hans"} {
 
@@ -1448,7 +1727,6 @@ proc load_font_obsolete {name fn pcsize {androidsize {}} } {
             font create $name -family $::helvetica_font -size [expr {int(1.0 * $::fontm * $androidsize)}]
         } else {
             font create "$name" -family $::helvetica_font -size [expr {int(1.0 * $pcsize * $::fontm)}]
-            #puts "created font $name in $::helvetica_font"
         }
         return
     } elseif {[language] == "th"} {
@@ -1461,20 +1739,17 @@ proc load_font_obsolete {name fn pcsize {androidsize {}} } {
             font create $name -family $::thai_fontname -size [expr {int(1.0 * $::fontm * $androidsize)}]
         } else {
             font create "$name" -family "sarabun" -size [expr {int(1.0 * $pcsize * $::fontm)}]
-            #puts "created font $name in sarabun"
         }
         return
     } else {
-        #puts "$::android load_font $name '$fn' $size : fontm: $::fontm"
         if {$::android == 1 || $::undroid == 1} {
-            #puts "sdltk addfont '$fn'"
             set result ""
             catch {
                 set result [sdltk addfont $fn]
             }
-            msg "addfont of '$fn' finished with fonts added: '$result'"
+            msg -DEBUG "addfont of '$fn' finished with fonts added: '$result'"
             if {$name != $result} {
-                puts "Warning, font name used does not equal Android font name added: '$name' != '$result'"
+                msg -WARNING "font name used does not equal Android font name added: '$name' != '$result'"
             }
             catch {
                 font create $name -family $name -size [expr {int(1.0 * $::fontm * $androidsize)}]
@@ -1482,7 +1757,7 @@ proc load_font_obsolete {name fn pcsize {androidsize {}} } {
             
         } else {
             font create "$name" -family "$name" -size [expr {int(1.0 * $pcsize * $::fontm)}]
-            msg "font create \"$name\" -family \"$name\" -size [expr {int(1.0 * $pcsize * $::fontm)}]"
+            msg -DEBUG "font create \"$name\" -family \"$name\" -size [expr {int(1.0 * $pcsize * $::fontm)}]"
         }
 
     }
@@ -1491,15 +1766,55 @@ proc load_font_obsolete {name fn pcsize {androidsize {}} } {
 
 proc list_remove_element {list toremove} {
     set newlist [lsearch -all -inline -not -exact $list $toremove]
-    #puts "remove  :'$toremove'"
-    #puts "oldlist  :$list"
-    #puts "newlist: '$newlist'"
     return $newlist
 }
 
+proc any_in_list { x list } {
+	if { $x eq "" } {
+		return 0
+	}	
+	set match 0
+	set i 0
+	while { !$match && $i < [llength $x] } {
+		set match [expr {[lindex $x $i] in $list}]
+		incr i
+	}
+	return $match
+}
+
+proc all_in_list { x list } {
+	if { $x eq "" } {
+		return 0
+	}
+	set match 1
+	set i 0
+	while { $match && $i < [llength $x] } {
+		set match [expr {[lindex $x $i] in $list}]
+		incr i
+	}
+	return $match
+}
+
+proc launch_os_wifi_setting {} {
+	if { $::android == 1 } {
+		borg activity android.settings.WIFI_SETTINGS {} {} {} {} {}
+	}
+}
+
+proc launch_os_time_setting {} {
+	if { $::android == 1 } {
+		borg activity android.settings.DATE_SETTINGS {} {} {} {} {}
+	}
+
+}
+
 proc web_browser {url} {
-    msg "Browser '$url'"
-    borg activity android.intent.action.VIEW $url text/html
+    msg -INFO "Browser '$url'"
+	if { $::android == 1 } {
+		borg activity android.intent.action.VIEW $url text/html
+	} elseif { $::tcl_platform(platform) eq "windows" } {
+		eval exec [auto_execok start] $url
+	}	
 }
 
 proc font_width {untranslated_txt font} {
@@ -1528,7 +1843,6 @@ proc array_keyvalue_sorted_by_val_limited {arrname {sort_order -increasing} {lim
     foreach k [array names arr] {
         set k2 "$arr($k) $k"
         #set k2 "[format {"%0.12i"} $arr($k)] $k"
-        #puts "k2: $k2"
         set t($k2) $k
     }
     
@@ -1541,7 +1855,6 @@ proc array_keyvalue_sorted_by_val_limited {arrname {sort_order -increasing} {lim
         if {$limit != -1 && [llength $toreturn] >= $limit} {
             break
         }
-        #msg "$k"
     }
     return $toreturn
 }
@@ -1551,7 +1864,6 @@ proc shot_history_count_profile_use {} {
 
     set dirs [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/history/" *.shot]]
     set dd {}
-    #puts -nonewline "Exporting"
     foreach d $dirs {
         unset -nocomplain arr
         unset -nocomplain sett
@@ -1560,11 +1872,10 @@ proc shot_history_count_profile_use {} {
             array set sett [ifexists arr(settings)]
         }
             if {[array size arr] == 0} {
-                msg "Corrupted shot history item during count: 'history/$d'"
+                msg -ERROR "Corrupted shot history item during count: 'history/$d'"
                 continue
             }
 
-        #puts [array get sett]
         #return
         set profile [ifexists sett(profile)]
         if {$profile != ""} {
@@ -1572,9 +1883,6 @@ proc shot_history_count_profile_use {} {
             incr profile_all_shot_count($profile)
         }
     }
-
-    #msg "Count of shots by espresso profile: [array get profile_all_shot_count]"
-    #msg "array_kv_keys_sorted_by_val: [array_keyvalue_sorted_by_val_limited profile_all_shot_count -decreasing 10]"
 
     # only keep the top 5 profiles in this global array, which will be marked with a heart symbol to indicate that they are the user's favrite profiles
     array set ::profile_shot_count [array_keyvalue_sorted_by_val_limited profile_all_shot_count -decreasing 6]
@@ -1617,10 +1925,10 @@ proc shot_history_export {} {
                 array set arr [read_file "history/$d"]
             }
             if {[array size arr] == 0} {
-                msg "Corrupted shot history item: 'history/$d'"
+                msg -ERROR "Corrupted shot history item: 'history/$d'"
                 continue
             }
-            msg "Exporting history item: $fname"
+            msg -INFO "Exporting history item: $fname"
             export_csv arr $fname
         }
 
@@ -1636,10 +1944,10 @@ proc shot_history_export {} {
 
                 }
                 if {[array size arr] == 0} {
-                    msg "Corrupted shot history item: 'history/$d'"
+                    msg -ERROR "Corrupted shot history item: 'history/$d'"
                     continue
                 }
-                msg "Exporting history item to JSON: $jsonfname"
+                msg -INFO "Exporting history item to JSON: $jsonfname"
                 export_json $ftxt $jsonfname
             }
         }
@@ -1666,14 +1974,13 @@ proc export_csv {arrname fn} {
         } err
 
         if {$failed == 1} {
-            puts "$err: '$fn'"
+            msg -ERROR "export_csv:" "$err: '$fn'"
         }
 
     }
 
     #set newfile "[file rootname $rootname].csv"
-    #puts "$rootname, $newfile"
-    puts -nonewline "."
+    msg -DEBUG "export_csv about to write"
     #write_file "history/$newfile" $lines
     write_file $fn $lines
 
@@ -1696,7 +2003,7 @@ proc export_json {ftxt fn} {
     }
     set v [dict2json $d]
 
-    puts -nonewline "."
+    msg -DEBUG "export_json about to write"
     write_file "$fn" $v
 }
 # Export one shot from memory, to an EEX format file
@@ -1750,8 +2057,7 @@ meta,,,,,,,,,Export version,1.1.0,
     }
 
     #set newfile "[file rootname $rootname].csv"
-    #puts "$rootname, $newfile"
-    puts -nonewline "."
+    msg -DEBUG "export_csv_common_format about to write"
     #write_file "history/$newfile" $lines
     write_file $fn $lines
 
@@ -1772,7 +2078,7 @@ set length [string length $arabic_string]
             string range $arabic_string $start_of_ascii $end_of_ascii]] ==  1
             && $i<$length}  {
           
-                puts [
+                msg -DEBUG "list_of_all_ascii_parts_a_unicode_string:" [
                     string range $arabic_string $start_of_ascii $end_of_ascii]
                 incr i
                 incr end_of_ascii 
@@ -1890,9 +2196,8 @@ proc render_arabic args {
         #find the character before the last.
         
         set before_last_char [string index $word end-1]
-        
+
         #for debugging purposes just print the character before the last.
-        ## puts $before_last_char
         
         #and try to see if  the character before the last is a word in the list
         #$initials defined in the previous line.
@@ -1906,11 +2211,9 @@ proc render_arabic args {
             set last_character [string index $word end]
             
             #print it for debugging purposes
-            ##puts $last_character
             
             #just to make sure that we we are matching correctly print the unicode
             #index number of the character
-            ##puts [scan $last_character %c]
             if {[string is ascii $last_character]} {
                 set before_last_char [render_arabic $before_last_char]
             }
@@ -1940,7 +2243,7 @@ proc render_arabic args {
                 \u062c {
                     #jeem
                     set word [string replace $word end end \ufe9e]
-                    puts $word
+                    msg -DEBUG "render_arabic \\u062B:" $word
                 }
                 \u062d {
                     #7aa2
@@ -2059,14 +2362,16 @@ proc render_arabic args {
         #screen
 
         set failed 1
-        #puts stderr $arabic_string
         catch {
             set arabic_string [regsub -all "\\m$original_word\\M" $arabic_string $word]
             set failed 0
         } err
 
         if {$failed == 1} {
-            puts "$err: '$arabic_string'"
+	    #
+	    # Here have to hope that the string is "printable"
+	    #
+            msg -ERROR "render_arabic failed: $err: '$arabic_string'"
         }
 
         #add and replace the corrected/conversion-of word with malformed one. in
@@ -2081,7 +2386,6 @@ proc render_arabic args {
     #The following 2 line is left for you to see the final result. just remove
     #the comment sign (#)
     #tk_messageBox -message $words
-    #puts "before return: $arabic_string \n is_messageBox=$is_messageBox"
     
     #reverse the whole string
     set arabic_string [string reverse $arabic_string]
@@ -2117,11 +2421,11 @@ proc iso8601stringparse {in} {
     set time ""
     regexp {([0-9-]+)T([0-9:]+)\.?[0-9]+?Z} $in discard date time
     if {$date == ""} {
-        puts "No date found in: '$in'"
+        msg -ERROR "No date found in: '$in'"
         return 0
     }
     if {$time == ""} {
-        puts "No time found in: '$in'"
+        msg -ERROR "No time found in: '$in'"
         return 0
     }
     set timestring "$date $time UTC"
@@ -2149,7 +2453,8 @@ proc wrapped_profile_string_part {input threshold partnumber} {
             return [subst {[string range [string range $input $slashpos+1 end] 0 $threshold]}]
         }
     } 
-    return [wrapped_string_part $input $threshold $partnumber]
+    set w [wrapped_string_part $input $threshold $partnumber]
+    return $w
 }
 
 proc wrapped_string_part {input threshold partnumber} {
@@ -2158,7 +2463,6 @@ proc wrapped_string_part {input threshold partnumber} {
         # work around that by adding a space when needed.
         append input " "
     }
-    #msg "wrapped_string_part $input ([string length $input]) $threshold"
     set l [wrap_string $input $threshold 1]
     return [lindex $l $partnumber]
 }
@@ -2189,6 +2493,14 @@ proc wrapped_string_part {input threshold partnumber} {
 proc wrap_string {input {threshold 75} {returnlist 0}} {
     set result_rows [list]
     set start_of_line_index 0
+
+    # john there's a bug in this proc, which I borrowed from the tcl wiki and did not write.  
+    # A string of length theshold+1 gets truncated by 1 character
+    # this "if" statement is a work around, where we simply accept a +1 overage on the threshold, instead of wrapping it
+    if {([string length $input] - 1) <= $threshold} {
+        #return $input
+    }
+
     while 1 {
         
         set this_line [string range $input $start_of_line_index [expr $start_of_line_index + $threshold - 1]]
@@ -2251,4 +2563,21 @@ proc wrap_string {input {threshold 75} {returnlist 0}} {
         set start_of_line_index [expr $start_of_line_index + $last_space_pos + 1]
     }
     
+}
+
+proc zero_if_empty {in} {
+	puts "in: $in"
+	if {$in == ""} {
+		puts "returning 0"
+		return 0
+	}
+	return $in
+}
+
+proc toggle_0_1 {in} {
+	if {$in == 1} {
+		return 0
+	}
+	return 1
+
 }

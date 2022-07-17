@@ -1,11 +1,19 @@
 # de1 internal state live variables
-package provide de1_vars 1.0
+package provide de1_vars 1.2
+
+package require lambda
+
+package require de1_device_scale 1.0
+package require de1_event 1.0
+package require de1_logging 1.0
+package require de1_profile 2.0
+package require de1_shot 2.0
+
 
 #############################
 # raw data from the DE1
 
 proc clear_espresso_chart {} {
-	#msg "clear_espresso_chart"
 	espresso_elapsed length 0
 	espresso_pressure length 0
 	espresso_weight length 0
@@ -79,11 +87,9 @@ proc espresso_chart_structures {} {
 }
 
 proc backup_espresso_chart {} {
-	#puts "backup_espresso_chart"
 	unset -nocomplain ::chartbk
 	foreach s [espresso_chart_structures] {
 		if {[$s length] > 0} {
-			#puts "backing up: $s with: [$s range 0 end]"
 			set ::chartbk($s) [$s range 0 end]
 		} else {
 			set ::chartbk($s) {}
@@ -96,7 +102,6 @@ proc restore_espresso_chart {} {
 	foreach s [espresso_chart_structures] {
 		$s length 0
 		if {[info exists ::chartbk($s)] == 1} {
-			#puts "restoring chart structure: '$s' to '$::chartbk($s)'"
 			$s append $::chartbk($s)
 		}
 	}
@@ -195,14 +200,12 @@ proc set_alarms_for_de1_wake_sleep {} {
 		# set sleep_seconds [expr {[next_alarm_time $::settings(scheduler_sleep)] - [clock seconds]}]
 		# set ::alarms_for_de1_sleep [after [expr {1000 * $sleep_seconds}] scheduler_sleep]
 
-		#msg "Wake schedule set for [next_alarm_time $::settings(scheduler_wake)] in $wake_seconds seconds"
-		#msg "Sleep schedule set for [next_alarm_time $::settings(scheduler_sleep)] in $sleep_seconds seconds"
 	}
 }
 
 proc scheduler_wake {} {
-	msg "Scheduled wake occured at [clock format [clock seconds]]"
-	start_idle
+	msg -NOTICE "Scheduled wake occured at [clock format [clock seconds]]"
+	start_schedIdle
 
 	# after alarm has occured go ahead and set the alarm for tommorrow
 	after 2000 set_alarms_for_de1_wake_sleep
@@ -210,9 +213,9 @@ proc scheduler_wake {} {
 
 proc scheduler_sleep {} {
 
-	msg "OBSOLETE: scheduled sleep is now an enforced awake time and this function should not be called"
+	msg -ERROR "OBSOLETE: scheduled sleep is now an enforced awake time and this function should not be called"
 
-	msg "Scheduled sleep occured at [clock format [clock seconds]]"
+	msg -NOTICE "Scheduled sleep occured at [clock format [clock seconds]]"
 	start_sleep
 
 	# after alarm has occured go ahead and set the alarm for tommorrow
@@ -236,16 +239,30 @@ proc next_alarm_time { in } {
 	return $alarm
 }
 
-proc time_format {seconds {crlf 0}} {
+proc time_format {seconds {crlf 0} {include_day 0} } {
+	if {$seconds == ""} {
+		# no time passed
+		return ""
+	}
+
 	set crlftxt " "
 	if {$crlf == 1} {
 		set crlftxt \n
 	}
 
-	if {$::settings(enable_ampm) == 1} {
-		return [subst {[translate [clock format $seconds -format {%A}]]$crlftxt[string trim [clock format $seconds -format {%l:%M %p}]]}]
+	if {$include_day == 0} {
+		# john decided to no longer include the day on the alarm, as it's more info that is needed for an alarm clock
+		if {$::settings(enable_ampm) == 1} {
+			return [subst {[string trim [clock format $seconds -format {%l:%M %p}]]}]
+		} else {
+			return [subst {[string trim [clock format $seconds -format {%H:%M}]]}]
+		}
 	} else {
-		return [subst {[translate [clock format $seconds -format {%A}]]$crlftxt[string trim [clock format $seconds -format {%H:%M}]]}]
+		if {$::settings(enable_ampm) == 1} {
+			return [subst {[translate [clock format $seconds -format {%A}]]$crlftxt[string trim [clock format $seconds -format {%l:%M %p}]]}]
+		} else {
+			return [subst {[translate [clock format $seconds -format {%A}]]$crlftxt[string trim [clock format $seconds -format {%H:%M}]]}]
+		}
 	}
 }
 
@@ -297,54 +314,38 @@ proc stop_timer_espresso_pour {} {
 }
 
 proc stop_timer_water_pour {} {
-	msg "stop_timer_water_pour"
+	msg -DEBUG "stop_timer_water_pour"
 	set ::timers(water_pour_stop) [clock milliseconds]
 }
 
 proc stop_timer_steam_pour {} {
-	msg "stop_timer_steam_pour"
+	msg -DEBUG "stop_timer_steam_pour"
 	set ::timers(steam_pour_stop) [clock milliseconds]
 }
 
 proc stop_timer_flush_pour {} {
-	msg "stop_timer_flush_pour"
+	msg -DEBUG "stop_timer_flush_pour"
 	set ::timers(flush_pour_stop) [clock milliseconds]
 }
 
 proc stop_espresso_timers {} {
-	#msg "stop_timers"
+	if {$::timer_running != 1} {
+		return
+	}
 	set ::timer_running 0
 	set ::timers(espresso_stop) [clock milliseconds]
-
-	scale_timer_stop
-	#stop_timer_preinfusion
-	#stop_timer_pour
-	#set ::substate_timers(stop) [clock milliseconds]
 }
 
 proc start_espresso_timers {} {
-	#msg "stop_timers"
-	#clear_timers
-	#zz5
+	clear_espresso_timers
 	set ::timer_running 1
 	set ::timers(espresso_start) [clock milliseconds]
-
-	scale_timer_start
-	#set ::timers(millistart) [clock milliseconds]
-	#set ::substate_timers(millistart) [clock milliseconds]
 }
 
 proc clear_espresso_timers {} {
-	#msg "clear_timers"
-	#global start_timer
-	#global start_millitimer
-	#set ::start_timer [clock seconds]
-	#set ::start_millitimer [clock milliseconds]
-	#set now [clock seconds]
-#zz1
+
 	unset -nocomplain ::timers
 	set ::timers(espresso_start) 0
-	#set ::timers(millistart) 0
 	set ::timers(espresso_stop) 0
 
 	unset -nocomplain ::substate_timers
@@ -358,12 +359,6 @@ proc clear_espresso_timers {} {
 	set ::timers(espresso_pour_stop) 0
 
 	set ::timer_running 0
-
-	catch {
-		scale_timer_off
-	}
-
-	#puts "clearing timers"
 }
 
 clear_espresso_timers
@@ -381,10 +376,17 @@ proc espresso_timer {} {
 	return [expr {([clock milliseconds] - $::timers(espresso_start) )/1000}]
 }
 
-proc espresso_millitimer {} {
-	return [expr {([clock milliseconds] - $::timers(espresso_start))}]
-	#global start_millitimer
-	#return [expr {[clock milliseconds] - $start_millitimer}]
+proc espresso_millitimer {{time_reference 0}} {
+
+	# Accept seconds or ms, always returns ms; 10000000000 is Sat Nov 20 09:46:40 PST 2286
+
+	if { $time_reference == 0 } {
+		set time_reference [clock milliseconds]
+	} elseif { $time_reference < 10000000000 } {
+		set time_reference [expr { $time_reference * 1000. }]
+	}
+
+	return [expr { $time_reference - $::timers(espresso_start) }]
 }
 
 proc espresso_elapsed_timer {} {
@@ -459,7 +461,17 @@ proc steam_pour_timer {} {
 	}
 }
 
-proc steam_pour_millitimer {} {
+proc steam_pour_millitimer {{time_reference 0}} {
+
+	# Accept seconds or ms, always returns ms; 10000000000 is Sat Nov 20 09:46:40 PST 2286
+
+	if { $time_reference == 0 } {
+		set time_reference [clock milliseconds]
+	} elseif { $time_reference < 10000000000 } {
+		set time_reference [expr { $time_reference * 1000. }]
+	}
+
+
 	if {[info exists ::timers(steam_pour_start)] != 1} {
 		return 0
 	}
@@ -468,10 +480,10 @@ proc steam_pour_millitimer {} {
 		return 0
 	} elseif {$::timers(steam_pour_stop) == 0} {
 		# no stop, so show current elapsed time
-		return [expr {([clock milliseconds] - $::timers(steam_pour_start))/1}]
+		return [expr {$time_reference - $::timers(steam_pour_start)}]
 	} else {
 		# stop occured, so show that.
-		return [expr {($::timers(steam_pour_stop) - $::timers(steam_pour_start))/1}]
+		return [expr {$::timers(steam_pour_stop) - $::timers(steam_pour_start)}]
 	}
 }
 
@@ -493,7 +505,6 @@ proc flush_pour_timer {} {
 		set t [expr {($::timers(flush_pour_stop) - $::timers(flush_pour_start))/1000}]
 		set c 4
 	}
-	#msg "flush_pour_timer: $t ($c)"
 	return $t
 }
 proc done_timer {} {
@@ -555,57 +566,6 @@ proc flush_done_timer {} {
 		# no stop, so show current elapsed time
 		return [expr {([clock milliseconds] - $::timers(flush_pour_stop))/1000}]
 	}
-}
-
-
-proc obsolete_event_timer_calculate {state destination_state previous_states} {
-
-
-
-	set eventtime [get_timer $state $destination_state]
-	 set beforetime 0
-	foreach s $previous_states {
-		set thistime [get_timer $state $s]
-		if {$thistime > $beforetime} {
-			set beforetime $thistime
-		}
-	}
-
-	
-
-	set elapsed [expr {($eventtime - $beforetime)/100}]
-	if {$elapsed < 0} {
-		# this means that the event has not yet started
-		return 0
-	}
-
-	return $elapsed
-}
-
-#proc preinfusion_timer {} {
-#	return [event_timer_calculate "Espresso" "preinfusion" {"stabilising" "final heating" "heating"} ]
-#}
-
-
-#proc pour_timer {} {
-#	return [event_timer_calculate "Espresso" "pouring" {"preinfusion" "stabilising" "final heating" "heating"} ]
-#}
-
-#proc done_timer {} {
-#	return [event_timer_calculate "Idle" "ready" {"pouring" "preinfusion" "stabilising" "final heating" "heating"} ]
-#}
-
-
-proc steam_timer {} {
-zz1
-	return [pour_timer]
-	#return [event_timer_calculate "Steam" "pouring" {"stabilising" "final heating"} ]
-}
-
-proc water_timer {} {
-zz2
-	return [pour_timer]
-	#return [event_timer_calculate "HotWater" "pouring" {"stabilising" "final heating"} ]
 }
 
 proc waterflow {} {
@@ -686,7 +646,6 @@ proc watertemp {} {
 
 	}
 
-	#puts "::de1(head_temperature) $::de1(head_temperature)"
 	return $::de1(head_temperature)
 }
 
@@ -738,7 +697,6 @@ proc accelerometer_angle {} {
 	if {$::android == 0} {
 		set ::settings(accelerometer_angle) [expr {(rand() + $::settings(accelerometer_angle)) - 0.5}]
 	}
-	#msg "::settings(accelerometer_angle) : $::settings(accelerometer_angle)"
 	return [round_to_one_digits [expr {abs($::settings(accelerometer_angle))}]]
 
 }
@@ -768,9 +726,6 @@ proc group_head_heater_temperature {} {
 	if {$::android == 0} {
 		# slowly have the water level drift
 		set ::de1(water_level) [expr {$::de1(water_level) + (.1*(rand() - 0.5))}]
-		#puts -nonewline .
-		#flush stdout
-		#update
 	}
 
 	return $::de1(head_temperature)
@@ -898,6 +853,14 @@ proc return_flow_weight_measurement {in} {
 	}
 }
 
+proc return_scale_timer {} {
+	if {$::de1(scale_timestamp) == 0} {
+		return "-"
+	}
+
+	return [round_to_one_digits [expr {$::de1(scale_timestamp) / 10.0}]]
+}
+
 proc return_weight_measurement {in} {
     if {$::de1(language_rtl) == 1} {
 		return [subst {[translate "g"][round_to_one_digits $in]}]
@@ -953,18 +916,19 @@ proc return_off_or_temperature {in} {
 }
 
 proc return_stop_at_weight_measurement {in} {
-	if {$in == 0} {
+
+	if {$in == 0 || $in == ""} {
 		return [translate "off"]
 	} else {
 
 	    if {$::de1(language_rtl) == 1} {
-			return [subst {[translate "g"][round_to_integer $in]}]
+			return [subst {[translate "g"][round_to_one_digits $in]}]
 		}
 
 		if {$::settings(enable_fluid_ounces) != 1} {
-			return [subst {[round_to_integer $in][translate "g"]}]
+			return [subst {[round_to_one_digits $in][translate "g"]}]
 		} else {
-			return [subst {[round_to_integer [ml_to_oz $in]] oz}]
+			return [subst {[round_to_one_digits [ml_to_oz $in]] oz}]
 		}
 	}
 }
@@ -1010,18 +974,10 @@ proc preinfusion_pour_timer_text {} {
 
 proc total_pour_timer_text {} {
     if {$::de1(language_rtl) == 1} {
-		if {$::settings(final_desired_shot_volume_advanced) > 0 && $::settings(settings_profile_type) == "settings_2c"} {
-			return "[return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume_advanced)]] < [translate {total}] [translate {s}][espresso_elapsed_timer]"
-		} else {
-			return "[translate {s}][espresso_elapsed_timer] [translate {total}] "
-		}
+		return "[translate {s}][espresso_elapsed_timer] [translate {total}] "
 	}
 
-	if {$::settings(final_desired_shot_volume_advanced) > 0 && $::settings(settings_profile_type) == "settings_2c"} {
-		return "[espresso_elapsed_timer][translate {s}] [translate {total}] < [return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume_advanced)]]"
-	} else {
-		return "[espresso_elapsed_timer][translate {s}] [translate {total}]"
-	}
+	return "[espresso_elapsed_timer][translate {s}] [translate {total}]"
 }
 
 proc espresso_done_timer_text {} {
@@ -1039,6 +995,11 @@ proc espresso_done_timer_text {} {
 
 proc pouring_timer_text {} {
     if {$::de1(language_rtl) == 1} {
+
+		if {$::settings(final_desired_shot_volume_advanced) > 0 && $::settings(settings_profile_type) == "settings_2c"} {
+			return "[return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume_advanced)]] < [translate {pouring}] [translate {s}][espresso_elapsed_timer]"
+		}
+
 		if {$::settings(scale_bluetooth_address) == "" && $::settings(final_desired_shot_volume) > 0 && ($::settings(settings_profile_type) == "settings_2a" || $::settings(settings_profile_type) == "settings_2b")} {
 			return "[translate {s}][espresso_pour_timer] [translate {pouring}] < [return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume)]]"
 
@@ -1047,11 +1008,14 @@ proc pouring_timer_text {} {
 		}
 	}
 
+	if {$::settings(final_desired_shot_volume_advanced) > 0 && $::settings(settings_profile_type) == "settings_2c"} {
+		return "[espresso_elapsed_timer][translate {s}] [translate {pouring}] < [return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume_advanced)]]"
+	}
+
 	if {$::settings(scale_bluetooth_address) == "" && $::settings(final_desired_shot_volume) > 0 && ($::settings(settings_profile_type) == "settings_2a" || $::settings(settings_profile_type) == "settings_2b")} {
 		return "[espresso_pour_timer][translate {s}] [translate {pouring}] < [return_liquid_measurement [round_to_integer $::settings(final_desired_shot_volume)]]"
-	} else {
-		return "[espresso_pour_timer][translate {s}] [translate {pouring}]"
 	}
+	return "[espresso_pour_timer][translate {s}] [translate {pouring}]"
 
 }
 
@@ -1139,9 +1103,21 @@ proc finalwaterweight_text {} {
 	return [return_weight_measurement $::de1(final_water_weight)]
 }
 
-proc dump_stack {a b c} {
-	msg ---
-	msg [stacktrace]
+# drink_weight is present for both espresso and hot water
+proc drink_weight_text {} {
+	if {$::de1(scale_weight) == "" || [ifexists ::settings(scale_bluetooth_address)] == ""} {
+		return ""
+	}
+
+	if {[ifexists ::blink_water_weight] == 1} {
+		return ""
+	}
+
+	return [return_weight_measurement $::settings(running_weight)]
+}
+
+proc dump_stack {args} {
+	msg -INFO [stacktrace]
 }
 
 #trace add variable de1(final_water_weight) write dump_stack
@@ -1248,7 +1224,7 @@ proc diff_pressure {} {
 		return [expr {3 - (rand() * 6)}]
 	}
 
-	return $::de1(pressure_delta)
+	return $::gui::state::_delta_pressure
 }
 
 proc diff_flow_rate {} {
@@ -1256,7 +1232,7 @@ proc diff_flow_rate {} {
 		return [expr {3 - (rand() * 6)}]
 	}
 
-	return $::de1(flow_delta)
+	return $::gui::state::_delta_flow
 }
 
 proc diff_flow_rate_text {} {
@@ -1362,11 +1338,18 @@ proc return_temperature_measurement {in} {
 	}
 }
 
+proc return_steam_temperature_measurement {in} {
+	if {$::settings(enable_fahrenheit) == 1} {
+		return [subst {[round_to_integer [celsius_to_fahrenheit $in]]\u00B0F}]
+	} else {
+		return [subst {[round_to_integer $in]\u00B0C}]
+	}
+}
+
 proc round_and_return_temperature_setting {varname} {
 	upvar $varname in
 	set out [round_temperature_number $in]
 	if {$in != $out} {
-	#puts "$in != $out"
 		set $varname $out
 	}	
 	return_temperature_setting $in
@@ -1385,7 +1368,6 @@ proc return_temperature_setting_or_off {in} {
 }
 
 proc return_temperature_setting {in} {
-	#msg "return_temperature_setting: $in"
 	if {$::settings(enable_fahrenheit) == 1} {
 		return [subst {[round_to_integer [celsius_to_fahrenheit $in]]\u00B0F}]
 	} else {
@@ -1518,6 +1500,9 @@ proc round_to_two_digits {in} {
 }
 
 proc round_to_one_digits {in} {
+	if {$in == ""} {
+		return ""
+	}
 	set x 0
 	catch {
     	set x [expr {round($in * 10.0)/10.0}]
@@ -1541,6 +1526,14 @@ proc celsius_to_fahrenheit {in} {
 	return $x
 }
 
+proc fahrenheit_to_celsius {in} {
+	set x 0
+	catch {
+		set x [expr {($in - 32) / 1.8}]
+	}
+	return $x
+}
+
 proc ml_to_oz {in} {
 	set x 0
 	catch {
@@ -1556,19 +1549,33 @@ proc backup_settings {} {
 	#update_de1_explanation_chart
 }
 
+proc refresh_skin_directories {} {
+	unset -nocomplain ::skin_directories_cache
+}
+
 proc skin_directories {} {
 	if {[info exists ::skin_directories_cache] == 1} {
 		return $::skin_directories_cache
 	}
 
 	set dirs [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/skins/" *]]
-	#puts "skin_directories: $dirs"
 	set dd {}
+
+	# overriding settings to include Insight Dark now
+	set ::settings(most_popular_skins) [list Insight "Insight Dark" MimojaCafe Metric DSx SWDark4 MiniMetric]
+
 	foreach d $dirs {
 		if {$d == "CVS" || $d == "example"} {
 			continue
 		}
 	    
+		if {[ifexists ::settings(show_only_most_popular_skins)] == 1 && [ifexists ::settings(most_popular_skins)] != ""} {
+			#puts "'$d' '[ifexists ::settings(most_popular_skins)]'"
+			if {[lsearch -exact [string toupper [ifexists ::settings(most_popular_skins)]] [string toupper $d] ] == -1} {
+				continue
+			}
+		}
+
 	    set fn "[homedir]/skins/$d/skin.tcl"
 	    set skintcl [read_file $fn]
 	    #set skintcl ""
@@ -1605,7 +1612,6 @@ proc fill_history_listbox {} {
 }
 
 proc fill_skin_listbox {} {
-	#puts "fill_skin_listbox $widget" 
 	set widget $::globals(tablet_styles_listbox)
 	$widget delete 0 99999
 
@@ -1615,15 +1621,14 @@ proc fill_skin_listbox {} {
 		if {$d == "CVS" || $d == "example"} {
 			continue
 		}
+
 		$widget insert $cnt [translate $d]
 		if {$::settings(skin) == $d} {
 			set ::current_skin_number $cnt
 		}
 
-		#puts "d: $d"
 		if {[ifexists ::de1plus_skins($d)] == 1} {
 			# mark skins that require the DE1PLUS model with a different color to highlight them
-			#puts "de1plus skin: $d"
 			$widget itemconfigure $cnt -background #F0F0FF
 		}
 		incr cnt
@@ -1634,7 +1639,6 @@ proc fill_skin_listbox {} {
 	$widget selection set $::current_skin_number
 
 	make_current_listbox_item_blue $widget
-	#puts "current_skin_number: $::current_skin_number"
 
 	preview_tablet_skin
 	$widget yview $::current_skin_number
@@ -1651,14 +1655,13 @@ proc make_current_listbox_item_blue { widget} {
 	set found_one 0
 	for {set x 0} {$x < [$widget index end]} {incr x} {
 		if {$x == [$widget curselection]} {
-			#puts "x: $x vs [$widget index end]"
 			#if {$x < [$widget index end]} {
 				$widget itemconfigure $x -foreground #000000 -selectforeground #000000  -background #c0c4e1
 				set found_one 1
 			#}
 
 		} else {
-			$widget itemconfigure $x -foreground #b2bad0 -background #fbfaff
+			$widget itemconfigure $x -foreground #666666 -background #fbfaff
 		}
 	}
 
@@ -1696,10 +1699,16 @@ proc profile_directories {} {
 		#	continue
 		#}
 
+		set dflow_test [string tolower [string range $d 0 5]]
+		if {$dflow_test == "d-flow"} {
+			if {[plugin_enabled "D_Flow_Espresso_Profile"] != true} {
+				continue
+			}
+		}
+
 		set filecontents [encoding convertfrom utf-8 [read_binary_file "[homedir]/profiles/$d"]]
 	    if {[string first "settings_profile_type settings_2b" $filecontents] != -1 || [string first "settings_profile_type settings_2c" $filecontents] != -1 || [string first "settings_profile_type settings_profile_flow" $filecontents] != -1 || [string first "settings_profile_type settings_profile_advanced" $filecontents] != -1} {
 
-		    #puts "de1+ profile: $d"
 		    # keep track of which skins are DE1PLUS so we can display them differently in the listbox
 		    set ::de1plus_profile([file rootname $d]) 1
 		}
@@ -1709,12 +1718,11 @@ proc profile_directories {} {
 			array set profile $filecontents
 		}
 		if {[info exists profile(profile_title)] != 1} {
-			msg "Corrupt profile file in profile_directories: '$d'"
+			msg -WARNING "Corrupt profile file in profile_directories: '$d'"
 			#continue
 		}
 
 		if {[ifexists profile(profile_hide)] == 1} {
-			#msg "Hide profile: '$d'"
 			if {$show_hidden != 1} {
 				continue
 			}
@@ -1733,24 +1741,23 @@ proc profile_directories {} {
 }
 
 proc delete_selected_profile {} {
+
 	set w $::globals(profiles_listbox)
-	#$w selection set $::current_profile_number
-	#puts "cc: '[$w curselection]'"
-	#set profile [lindex [profile_directories] [lindex [$w curselection] 0]]
+	if {[$w curselection] == ""} {
+		msg -NOTICE "No profile has yet been tapped by the user to delete, so doing nothing"
+		return
+	}
 	set profile $::profile_number_to_directory([$w curselection]) 
 
 	set fn "[homedir]/profiles/${profile}.tcl"
-	puts "todelete: '$fn'"
+	msg -NOTICE "About to delete profile: '$fn'"
 
-	set todel $::settings(profile)
-	puts "delete profile: $todel"
 	if {$profile == "default"} {
-		msg "cannot delete default profile"
+		msg -NOTICE "cannot delete default profile"
 		return
 	}
 	#return
 
-	#puts [subst {file delete "[homedir]/profiles/${todel}.tcl"}]
 	file delete $fn
 	set ::settings(profile) "default"
 	fill_profiles_listbox 
@@ -1774,6 +1781,22 @@ proc bluetooth_character {} {
 	}
 
 	return "\uE018"
+}
+
+proc thermometer_character {} {
+	if {[language] == "ar" || [language] == "he"} {
+		return "T:"
+	}
+
+	return "\uF2C9"
+}
+
+proc scale_character {} {
+	if {[language] == "ar" || [language] == "he"} {
+		return "SCALE:"
+	}
+
+	return "\uF515"
 }
 
 proc usb_character {} {
@@ -1840,42 +1863,81 @@ proc fill_ble_listbox {} {
 	make_current_listbox_item_blue $widget
 }
 
-proc fill_ble_scale_listbox {} {
-	
+proc remove_peripheral {address} {
+
+	set newdict {}
+	foreach d $::peripheral_device_list {
+		if {[dict get $d address] != $address} {
+			lappend newdict $d
+		}
+	}
+	set ::peripheral_device_list $newdict
+}
+
+proc fill_peripheral_listbox {} {
 
 	set widget $::ble_scale_listbox_widget
+
 	$widget delete 0 99999
 	set cnt 0
 	set current_ble_number 0
 
+	# count peripherals with the same name, so we can differentiate them in the listbox if needed
+	foreach d $::peripheral_device_list {
+		set name [dict get $d name]
+		if {[info exists peripherals_seen($name)] == 1} {
+			incr peripherals_seen($name)
+		} else {
+			set peripherals_seen($name) 1
+		}
+	}
+
+
 	set one_selected 0
-	foreach d [lsort -dictionary -increasing $::scale_bluetooth_list] {
+	foreach d $::peripheral_device_list {
 		set addr [dict get $d address]
 		set name [dict get $d name]
-		set type [dict get $d type]
-		set icon [bluetooth_character]
+		set connectiontype [dict get $d connectiontype]
+		set devicetype [dict get $d devicetype]
+		set family [dict get $d devicefamily]
+		set icon "UNKN:"
 
-		if { $name eq "" } { set name $type }
+		if {$devicetype eq "thermometer"} {
+			set icon [thermometer_character]
+		} elseif {$devicetype eq "scale"} {
+			set icon [scale_character]
+		} elseif {$connectiontype eq "ble"} {
+			set icon [bluetooth_character]
+		}
+
+		if { $name eq "" } { set name $family }
+
+		if {$peripherals_seen($name) > 1} {
+			# this peripheral appears twice in a ble scan, so give the last two digits of the ble address to differentiate it
+			set name "[string range $addr end-1 end]-$name"
+		}
+
 		if {$addr == [ifexists ::settings(scale_bluetooth_address)]} {
 			$widget insert $cnt " \[[checkboxchar]\] $icon $name"
 			set one_selected 1
 		} else {
 			$widget insert $cnt " \[   \] $icon $name"
 		}
-			#$widget insert $cnt $addr
+
 		if {[ifexists ::settings(scale_bluetooth_address)] == $addr} {
 			set current_ble_number $cnt
 		}
+
 		incr cnt
 	}
-	
-	$widget selection set $current_ble_number;
 
-	set ::scale_needs_to_be_selected 0
-	if {[llength $::de1_device_list] > 0 && $one_selected == 0} {
-		set ::scale_needs_to_be_selected 1
-	}
+	$widget selection set $current_ble_number;
 	
+	set ::peripheral_needs_to_be_selected 0
+	if {[llength $::de1_device_list] > 0 && $one_selected == 0} {
+		set ::peripheral_needs_to_be_selected 1
+	}
+
 	make_current_listbox_item_blue $widget
 }
 
@@ -1897,7 +1959,6 @@ proc array_keys_sorted_by_val {arrname {sort_order -increasing}} {
 	foreach k [array names arr] {
 		set k2 "$arr($k) $k"
 		#set k2 "[format {"%0.12i"} $arr($k)] $k"
-		#puts "k2: $k2"
 		set t($k2) $k
 	}
 	
@@ -1937,14 +1998,13 @@ proc fill_specific_profiles_listbox { widget selected_profile_name hide_mode} {
 	foreach d $profiles {
 
 		set fn "[homedir]/profiles/${d}.tcl"
-		#puts "fn: $fn"
 		unset -nocomplain profile
 		catch {
 			array set profile [encoding convertfrom utf-8 [read_binary_file $fn]]
 		}
 
 		if {[info exists profile(profile_title)] != 1} {
-			msg "Corrupt profile file in choices: '$d'"
+			msg -WARNING "Corrupt profile file in choices: '$d'"
 			#continue
 			set profile(profile_title) "$d \u2639 \u2639 \u2639"
 		}
@@ -1959,7 +2019,6 @@ proc fill_specific_profiles_listbox { widget selected_profile_name hide_mode} {
 		set ptitle $profile(profile_title)
 
 		set pcnt [ifexists ::profile_shot_count($d)]
-		#puts "ptitle: '$ptitle '$pcnt'"
 
 		if {[language] != "en" && [ifexists profile(profile_language)] == "en" && [ifexists profile(author)] == "Decent"} {
 			set p [translate $ptitle]
@@ -2014,14 +2073,11 @@ proc fill_specific_profiles_listbox { widget selected_profile_name hide_mode} {
 		set ::profile_number_to_directory($cnt) $d
 	
 
-		#msg "'$selected_profile_name' == '[ifexists profile(profile_title)]'"
 		if {[string tolower $selected_profile_name] == [string tolower [ifexists profile(profile_title)]]} {
 			set selected_profile_number $cnt
-			#puts "current profile of '$d' is #$cnt"
 		} elseif {[language] != "en"} {
 			if {[string tolower $selected_profile_name] == [string tolower [translate [ifexists profile(profile_title)]]]} {
 				set selected_profile_number $cnt
-			#	msg "translated current profile of '$d' is #$cnt"
 			}
 		}
 
@@ -2050,205 +2106,6 @@ proc fill_profiles_listbox {} {
 	unset -nocomplain ::filling_profiles 
 }
 
-proc copy_pressure_profile_to_advanced_profile {} {
-
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set temp_bump_time_seconds $::settings(temp_bump_time_seconds)
-		set first_frame_len $temp_bump_time_seconds
-
-		set second_frame_len [expr {$::settings(preinfusion_time) - $temp_bump_time_seconds}]		
-		if {$second_frame_len < 0} { 
-			set second_frame_len 0
-		}
-	} else {
-		set first_frame_len 0
-		set second_frame_len $::settings(preinfusion_time)
-		set ::settings(espresso_temperature_0) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_1) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_2) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_3) $::settings(espresso_temperature)
-	}
-
-	msg "copy_pressure_profile_to_advanced_profile"
-	set preinfusion [list \
-		name [translate "preinfusion"] \
-		temperature $::settings(espresso_temperature) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "fast" \
-		pressure 1 \
-		flow $::settings(preinfusion_flow_rate) \
-		seconds $first_frame_len \
-		volume $::settings(preinfusion_stop_volumetric) \
-		exit_if "1" \
-		exit_type "pressure_over" \
-		exit_pressure_over $::settings(preinfusion_stop_pressure) \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set preinfusion2 [list \
-		name [translate "preinfusion"] \
-		temperature $::settings(espresso_temperature_1) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "fast" \
-		pressure 1 \
-		flow $::settings(preinfusion_flow_rate) \
-		seconds $second_frame_len \
-		volume $::settings(preinfusion_stop_volumetric) \
-		exit_if "1" \
-		exit_type "pressure_over" \
-		exit_pressure_over $::settings(preinfusion_stop_pressure) \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set hold [list \
-		name [translate "rise and hold"] \
-		temperature $::settings(espresso_temperature_2) \
-		sensor "coffee" \
-		pump "pressure" \
-		transition "fast" \
-		pressure $::settings(espresso_pressure) \
-		seconds $::settings(espresso_hold_time) \
-		volume $::settings(pressure_hold_stop_volumetric) \
-		exit_if 0 \
-		exit_pressure_over 11 \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set decline [list \
-		name [translate "decline"] \
-		temperature $::settings(espresso_temperature_3) \
-		sensor "coffee" \
-		pump "pressure" \
-		transition "smooth" \
-		pressure $::settings(pressure_end) \
-		seconds $::settings(espresso_decline_time) \
-		volume $::settings(pressure_decline_stop_volumetric) \
-		exit_if 0 \
-		exit_pressure_over 11 \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set ::settings(advanced_shot) [list $preinfusion $preinfusion2 $hold $decline]
-	} else {
-		set ::settings(advanced_shot) [list $preinfusion2 $hold $decline]
-	}
-	set ::current_step_number 0
-}
-
-
-proc copy_flow_profile_to_advanced_profile {} {
-
-
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set temp_bump_time_seconds $::settings(temp_bump_time_seconds)
-		set first_frame_len $temp_bump_time_seconds
-
-		set second_frame_len [expr {$::settings(preinfusion_time) - $temp_bump_time_seconds}]		
-		if {$second_frame_len < 0} { 
-			set second_frame_len 0
-		}
-	} else {
-		set first_frame_len 0
-		set second_frame_len $::settings(preinfusion_time)
-		set ::settings(espresso_temperature_0) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_1) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_2) $::settings(espresso_temperature)
-		set ::settings(espresso_temperature_3) $::settings(espresso_temperature)
-	}
-
-
-	puts "copy_flow_profile_to_advanced_profile"
-	set preinfusion [list \
-		name [translate "preinfusion"] \
-		temperature $::settings(espresso_temperature) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "fast" \
-		pressure 1 \
-		flow $::settings(preinfusion_flow_rate) \
-		seconds $first_frame_len \
-		volume $::settings(preinfusion_stop_volumetric) \
-		exit_if "1" \
-		exit_type "pressure_over" \
-		exit_pressure_over $::settings(preinfusion_stop_pressure) \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set preinfusion2 [list \
-		name [translate "preinfusion"] \
-		temperature $::settings(espresso_temperature_1) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "fast" \
-		pressure 1 \
-		flow $::settings(preinfusion_flow_rate) \
-		seconds $second_frame_len \
-		volume $::settings(preinfusion_stop_volumetric) \
-		exit_if "1" \
-		exit_type "pressure_over" \
-		exit_pressure_over $::settings(preinfusion_stop_pressure) \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set hold [list \
-		name [translate "hold"] \
-		temperature $::settings(espresso_temperature_2) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "fast" \
-		flow $::settings(flow_profile_hold) \
-		seconds $::settings(espresso_hold_time) \
-		volume $::settings(flow_hold_stop_volumetric) \
-		exit_if 0 \
-		exit_pressure_over 11 \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-	set decline [list \
-		name [translate "decline"] \
-		temperature $::settings(espresso_temperature_3) \
-		sensor "coffee" \
-		pump "flow" \
-		transition "smooth" \
-		flow $::settings(flow_profile_decline) \
-		seconds $::settings(espresso_decline_time) \
-		volume $::settings(flow_decline_stop_volumetric) \
-		exit_if 0 \
-		exit_pressure_over 11 \
-		exit_pressure_under 0 \
-		exit_flow_over 6 \
-		exit_flow_under 0 \
-	]
-
-
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set ::settings(advanced_shot) [list $preinfusion $preinfusion2 $hold $decline]
-	} else {
-		set ::settings(advanced_shot) [list $preinfusion $hold $decline]
-	}
-
-	#puts "adv: $::settings(advanced_shot)"
-	set ::current_step_number 0
-}
-
 proc fill_languages_listbox {} {
 
 	set widget $::languages_widget
@@ -2264,7 +2121,6 @@ proc fill_languages_listbox {} {
 	set current 0
 
 	foreach {code desc} [translation_langs_array] {
-        #puts "$code $desc"
 
 		if {$::settings(language) == $code} {
 			set current $cnt
@@ -2279,26 +2135,75 @@ proc fill_languages_listbox {} {
 	$::languages_widget yview $current
 }
 
-proc toggle_extension {} {
-	set stepnum [$::extensions_widget curselection]
+proc highlight_extension {} {
+	set stepnum [$::extensions_widget curselection]	
 	if {$stepnum == ""} {
+		set ::extension_highlighted -1
 		return
+	}
+	if { [info exists ::extension_highlighted] } {
+		if { $::extension_highlighted == $stepnum } {
+			set plugin [lindex [available_plugins] $stepnum]
+			plugins toggle $plugin
+			
+			fill_extensions_listbox
+			$::extensions_widget selection set $stepnum
+			make_current_listbox_item_blue $::extensions_widget
+		} else {
+			set ::extension_highlighted $stepnum
+		}
+	} else {
+		set ::extension_highlighted $stepnum
 	}
 
 	set plugin [lindex [available_plugins] $stepnum ]
 
-	toggle_plugin $plugin
+	if {[info exists ::plugins::${plugin}::ui_entry] && [set ::plugins::${plugin}::ui_entry] != ""} {
+		canvas_show "$::extensions_settings $::extensions_settings_button"
+	} else {
+		canvas_hide "$::extensions_settings $::extensions_settings_button"
+		msg -WARNING "Plugin" $plugin "Does not have a uientry"
+	}
+
+	set description ""
+
+
+	foreach {name value} { "Version:" version "Author:" author "Contact:" contact "\n" description} {
+		set conf [set ::plugins::${plugin}::${value}]
+		if { $conf != {} } {
+			append description "[translate $name] $conf\n"
+		}
+	}
+	.can itemconfigure $::extensions_metadata -text $description
 
 	fill_extensions_listbox
+	$::extensions_widget selection set $stepnum;
+	make_current_listbox_item_blue $::extensions_widget
+}
+
+proc fill_plugin_settings {} {
+	set stepnum [$::extensions_widget curselection]
+	if {$stepnum == ""} {
+		borg toast [translate "No extension selected"]
+		return
+	}
+
+	set plugin [lindex [available_plugins] $stepnum]
+
+	if {[info exists ::plugins::${plugin}::ui_entry] && [set ::plugins::${plugin}::ui_entry] != ""} {
+		set next_page [set ::plugins::${plugin}::ui_entry]
+		page_to_show_when_off $next_page
+	}
 }
 
 proc fill_extensions_listbox {} {
 
 	set widget $::extensions_widget
 
+	set stepnum [$::extensions_widget curselection]
+
 	$widget delete 0 99999
 	set cnt 0
-	set current_profile_number 9999
 	set current 0
 
 	foreach {plugin} [available_plugins] {
@@ -2315,13 +2220,25 @@ proc fill_extensions_listbox {} {
 				set p "\u2610 "
 			}
 		}
+		
+		if { [info exists ::plugins::${plugin}::name ] && [subst \$::plugins::${plugin}::name] ne "" } {
+			set plugin_name [subst \$::plugins::${plugin}::name]
+		} else {
+			set plugin_name $plugin
+		}
 
-		$widget insert $cnt "$p $plugin"
+		$widget insert $cnt "$p $plugin_name"
 		incr cnt
 	}
 
-	$widget selection set $current;
 	$::extensions_widget yview $current
+
+	if {$stepnum == ""} {
+		canvas_hide "$::extensions_settings $::extensions_settings_button"
+	} else {
+		$::extensions_widget selection set $stepnum;
+		make_current_listbox_item_blue $::extensions_widget
+	}
 }
 
 proc fill_advanced_profile_steps_listbox {} {
@@ -2337,7 +2254,6 @@ proc fill_advanced_profile_steps_listbox {} {
 		array set props $step
 
 		set name $props(name)
-		#puts "[expr {1 + $cnt}]. $name"
 		$widget insert $cnt "[expr {1 + $cnt}]. $name"
 		incr cnt
 	}
@@ -2354,25 +2270,6 @@ proc fill_advanced_profile_steps_listbox {} {
 	update idletasks
 }
 
-# on androwish some listbox selctions are causing multiple cascading events, and we don't know why
-# this is a work around that assumes that each cascading event will happen within 100ms of each others
-set time_of_last_listbox_event [clock milliseconds]
-proc check_for_multiple_listbox_events_bug {} {
-	msg "::de1(current_context) $::de1(current_context)"
-	return 0
-
-	set now [clock milliseconds]
-	set diff [expr {$now - $::time_of_last_listbox_event}]
-	set ::time_of_last_listbox_event $now
-
-	if {$diff < 100} {
-		#msg "duplicate listbox event detected"
-		return 1
-	}
-
-	return 0
-}
-
 proc load_language {} {
 	set stepnum [$::languages_widget curselection]
 	if {$stepnum == ""} {
@@ -2387,20 +2284,14 @@ proc load_language {} {
 
 	make_current_listbox_item_blue $::languages_widget
 
-	#puts "lang '$::settings(language)' '$stepnum'"
 }
 
 proc load_advanced_profile_step {{force 0}} {
-	#msg "load_advanced_profile_step [clock milliseconds]"
 
 	if {$::de1(current_context) != "settings_2c" && $force == 0} {
-		puts "returning load_advanced_profile_step"
+		msg -DEBUG "returning load_advanced_profile_step"
 		return 
 	}
-
-	#if {[check_for_multiple_listbox_events_bug] == 1} {
-	#	return
-	#}
 
 	set stepnum [$::advanced_shot_steps_widget curselection]
 	if {$stepnum == ""} {
@@ -2412,6 +2303,12 @@ proc load_advanced_profile_step {{force 0}} {
 	#set stepnum [current_adv_step]
 
 	unset -nocomplain ::current_adv_step
+	# max flow / max pressure are not always set, so we set it now
+	array set ::current_adv_step {max_flow_or_pressure 0 max_flow_or_pressure_range 0.6}
+
+	# Max weight is not always set, so we set it here
+	array set ::current_adv_step {weight 0.0}
+
 	array set ::current_adv_step [lindex $::settings(advanced_shot) $stepnum]
 
 	make_current_listbox_item_blue $::advanced_shot_steps_widget
@@ -2425,21 +2322,20 @@ proc current_adv_step {} {
 
 	set stepnum [$::advanced_shot_steps_widget curselection]
 	if {$stepnum == ""} {
-		puts "blank seleted"
+		msg -DEBUG "current_adv_step: blank seleted"
 		set stepnum 0
 	}
-	puts "stepnum: $stepnum"
+	msg -DEBUG "current_adv_step: stepnum: $stepnum"
 	return $stepnum
 }
 
 proc change_current_adv_shot_step_name {} {
-	#puts "change_current_adv_shot_step_name"
 	set ::current_adv_step(name) "$::profile_step_name_to_add"
 	save_current_adv_shot_step
 	fill_advanced_profile_steps_listbox
 }
 
-proc save_current_adv_shot_step {} {
+proc save_current_adv_shot_step { {discard {}} } {
 	set ::settings(advanced_shot) [lreplace $::settings(advanced_shot) [current_adv_step] [current_adv_step]  [array get ::current_adv_step]]
 
 	profile_has_changed_set
@@ -2452,13 +2348,13 @@ proc delete_current_adv_step {} {
 
 	if {[$::advanced_shot_steps_widget index end] == 1} {
 		# we don't allow deleting the only step, because that leads to weird UI issues.
-		puts "not deleting step because there is only one advanced step at the moment"
+		msg -NOTICE "not deleting step because there is only one advanced step at the moment"
 		return
 	}
 
 	set ::settings(advanced_shot) [lreplace $::settings(advanced_shot)  [current_adv_step] [current_adv_step]]
 
-	puts "deleting"
+	msg -DEBUG "delete_current_adv_step: deleting"
 	set ::current_step_number 0
 	$::advanced_shot_steps_widget selection set $::current_step_number;
 	$::advanced_shot_steps_widget activate $::current_step_number;
@@ -2521,21 +2417,20 @@ proc preview_tablet_skin {} {
 	}
 
 
-	msg "preview_tablet_skin"
+	msg -DEBUG "preview_tablet_skin (entry)"
 	set w $::globals(tablet_styles_listbox)
 	if {[$w curselection] == ""} {
-		msg "no current skin selection"
+		msg -DEBUG "preview_tablet_skin: no current skin selection"
 		#set w 
 		#set skindir [$w get $::current_skin_number]
 		#return
-		puts "::current_skin_number: $::current_skin_number"
+		msg -DEBUG "preview_tablet_skin ::current_skin_number: $::current_skin_number"
 		$w selection set $::current_skin_number
 	}
 
 
 	set skindir [lindex [skin_directories] [$w curselection]]
 	set ::settings(skin) $skindir
-	#puts "skindir: '$skindir'"
 
 	set fn "[homedir]/skins/$skindir/${::screen_size_width}x${::screen_size_height}/icon.jpg"
 	if {[file exists $fn] != 1} {
@@ -2543,7 +2438,7 @@ proc preview_tablet_skin {} {
     		file mkdir "[homedir]/skins/$skindir/${::screen_size_width}x${::screen_size_height}/"
     	}
 
-		puts "creating $fn"
+		msg -DEBUG "preview_tablet_skin: creating $fn"
         set rescale_images_x_ratio [expr {$::screen_size_height / 1600.0}]
         set rescale_images_y_ratio [expr {$::screen_size_width / 2560.0}]
 
@@ -2565,7 +2460,7 @@ proc preview_tablet_skin {} {
 proc preview_history {w args} {
 	catch {
 		set profile [lindex [history_directories] [$w curselection] [$w curselection]]
-		puts "history item: $profile [$w curselection]"
+		msg -DEBUG "preview_history: history item: $profile [$w curselection]"
 
 		set fn "[homedir]/history/${profile}.tcl"
 
@@ -2591,14 +2486,24 @@ proc save_settings_and_ask_to_restart_app {} {
 	message_page [translate "Please quit and restart this app to apply your changes."] [translate "Quit"];
 }
 
-proc message_page {msg buttonmsg} {
+proc message_page {msg buttonmsg {longertxt {}} } {
+
 	if {[catch {
+
+		if {$longertxt == ""} {
+			.can coords $::message_label [list [rescale_x_skin 1280] [rescale_y_skin 800]]
+		} else {
+			# if there is a longer message, then move the larger font label up, to make room for it
+			.can coords $::message_label [list [rescale_x_skin 1280] [rescale_y_skin 550]]
+		}
+
 		.can itemconfigure $::message_label -text $msg
 		.can itemconfigure $::message_button_label -text $buttonmsg
+		.can itemconfigure $::message_longertxt -text $longertxt
 		set_next_page off message; 
 		page_show message
 	} err] != 0} {
-		msg "message_page failed because: '$err'"
+		msg -ERROR "message_page failed because: '$err'"
 	}
 
 }
@@ -2609,14 +2514,32 @@ proc message_page {msg buttonmsg} {
 #set ::infopage_button [add_de1_button "infopage" {say [translate {Ok}] $::settings(sound_button_in); set_next_page off off} 980 990 1580 1190 ""]
 
 
-proc info_page {msg buttonmsg} {
+proc info_page {msg buttonmsg {nextpage {}}} {
 	if {[catch {
 		.can itemconfigure $::infopage_label -text $msg
 		.can itemconfigure $::infopage_button_label -text $buttonmsg
-		set_next_page off infopage; 
+		set_next_page off infopage
+		page_show off
+
+		if {$nextpage != ""} {
+			msg -INFO "Setting next page after info to: '$nextpage'"
+			set_next_page off $nextpage
+		} else {
+			set_next_page off off
+		}
+	} err] != 0} {
+		msg -ERROR "info_page failed because: '$err'"
+	}
+}
+
+proc version_page {msg buttonmsg} {
+	if {[catch {
+		.can itemconfigure $::versionpage_label -text $msg
+		.can itemconfigure $::versionpage_button_label -text $buttonmsg
+		set_next_page off versionpage; 
 		page_show off
 	} err] != 0} {
-		msg "info_page failed because: '$err'"
+		msg -ERROR "info_page failed because: '$err'"
 	}
 }
 
@@ -2629,7 +2552,7 @@ proc change_bluetooth_device {} {
 	#set ::settings(profile) [$::globals(profiles_listbox) get [$::globals(profiles_listbox) curselection]]
 	if {[$w curselection] == ""} {
 		# no current selection
-		puts "no BLE selection"
+		msg -DEBUG "change_bluetooth_device: no BLE selection"
 		return ""
 	}
 
@@ -2644,11 +2567,11 @@ proc change_bluetooth_device {} {
 		################################################################################################################
 		# prevent rapid changing of DE1 bluetooth setting, because that can cause multiple connections to be made to the same DE1
 		if {[ifexists ::globals(changing_bluetooth_device)] == 1} {
-			puts "already changing_bluetooth_device"
+			msg -DEBUG "change_bluetooth_device: already changing_bluetooth_device"
 			return
 		}
 
-		msg "reconnecting to DE1"
+		msg -NOTICE "change_bluetooth_device: reconnecting to DE1"
 
 	}
 
@@ -2667,46 +2590,65 @@ proc change_bluetooth_device {} {
 	fill_ble_listbox
 }
 
-
 proc change_scale_bluetooth_device {} {
 	set w $::ble_scale_listbox_widget
-
 
 	if {$w == ""} {
 		return
 	}
-	if {[$w curselection] == ""} {
-		# no current selection
-		#return ""
-		msg "re-connecting to scale"
-		ble_connect_to_scale
+
+	set selection_index [$w curselection]
+	if {$selection_index == ""} {
 		return
 	}
-	set selection_index [$w curselection]
-	set dic [lindex $::scale_bluetooth_list $selection_index]
+
+	puts "selection_index: $selection_index"
+
+	msg "selected item" 	
+	set dic [lindex $::peripheral_device_list $selection_index]
 	set addr [dict get $dic address]
 	set name [dict get $dic name]
+	set connectiontyte [dict get $dic connectiontype]
+	set devicetype [dict get $dic devicetype]
+	set devicefamily [dict get $dic devicefamily]
 
 	if { $name == "" } {
-		set name [dict get $dic type]
+		set name $devicefamily
 	}
 
-	set ::settings(scale_bluetooth_address) $addr
-	set ::settings(scale_bluetooth_name) $name
-
-	set ::settings(scale_type) [ifexists ::scale_types($addr)]
-	msg "set scale type to: '$::settings(scale_type)' $addr"
-
-	if {$addr == $::settings(scale_bluetooth_address)} {
-		ble_connect_to_scale
+	if {$connectiontyte ne "ble"} {
+		msg -WARNING "Non BLE peripheral requested for connect. Damn!"
 		return
 	}
-	#msg "scale types: [array get ::scale_types]"
+
+	msg -INFO  "selected $devicetype $name @ $addr"
+
+	if {$devicetype eq "scale"} {
+		set ::settings(scale_bluetooth_address) $addr
+		set ::settings(scale_bluetooth_name) $name
+		set ::settings(scale_type) $devicefamily
+		msg "set scale type to: '$::settings(scale_type)' $addr"
+
+		set handle $::de1(scale_device_handle)
+		if {$handle != "" && $handle != 0} {
+			set ::de1(scale_device_handle) 0
+			#set ::de1(cmdstack) {};
+			#set ::currently_connecting_scale_handle 0
+			ble close $handle
+			ble_connect_to_scale
+		}  else {
+			ble_connect_to_scale
+		}
+
+		#after 500 
+
+	} else {
+		msg -WARNING "Non scale peripheral requested for connect. Damn!"
+	}
 
 	save_settings
-	ble_connect_to_scale
+	fill_peripheral_listbox
 
-	fill_ble_scale_listbox
 }
 
 
@@ -2718,12 +2660,17 @@ proc select_profile { profile } {
 	# for importing De1 profiles that don't have this feature.
 	set ::settings(preinfusion_flow_rate) 4
 
+	# Disable limits by default
+	set ::settings(maximum_pressure) 0
+	set ::settings(maximum_flow) 0
+
+	# 
+	unset -nocomplain ::settings(profile_video_help)
+
 	load_settings_vars $fn
 
 	set ::settings(profile_filename) $profile
-	#msg "profile: $profile - $::settings(profile_notes)"
 
-	#puts "Author: '[ifexists ::settings(author)]'"
 	if {[language] != "en" && $::settings(profile_language) == "en" && [ifexists ::settings(author)] == "Decent"} {
 		# the first time this profile is loaded into another language, we should try to translate the
 		# title and notes to the local language
@@ -2733,17 +2680,10 @@ proc select_profile { profile } {
 	}
 	set ::settings(original_profile_title) $::settings(profile_title)
 
-	if {$::settings(settings_profile_type) == "settings_2" || $::settings(settings_profile_type) == "settings_profile_pressure"} {
-		set ::settings(settings_profile_type) "settings_2a"
-	} elseif {$::settings(settings_profile_type) == "settings_profile_flow"} {
-		set ::settings(settings_profile_type) "settings_2b"
-	} elseif {$::settings(settings_profile_type) == "settings_profile_advanced" || $::settings(settings_profile_type) == "settings_2c2"} {
-		# old profile names that shouldn't exist any more, so upgrade them to the latest name
-		set ::settings(settings_profile_type) "settings_2c"
-	}
-
-	#puts "::settings(settings_profile_type)  $::settings(settings_profile_type)"
+	set ::settings(settings_profile_type) [::profile::fix_profile_type $::settings(settings_profile_type)]
 	set ::settings(profile) $::settings(profile_title)
+
+	::profile::sync_from_legacy
 
 	update_onscreen_variables
 	profile_has_not_changed_set
@@ -2752,6 +2692,7 @@ proc select_profile { profile } {
 	# profile needs to sent right away to the DE1, in case the person taps the GH button to start espresso w/o leaving settings
 	send_de1_settings_soon
 }
+
 
 set preview_profile_counter 0
 proc preview_profile {} {
@@ -2767,15 +2708,13 @@ proc preview_profile {} {
 
 	incr ::preview_profile_counter
 	set w $::globals(profiles_listbox)
-    #msg "$::preview_profile_counter : $w vs $win"
 
     #$w selection set active
 
 	#set ::settings(profile) [$::globals(profiles_listbox) get [$::globals(profiles_listbox) curselection]]
-	#puts "w: $w '[$w curselection]'"
 	if {[$w curselection] == ""} {
 		$w selection set $::current_profile_number
-		puts "setting profile to $::current_profile_number"
+		msg -DEBUG "preview_profile: setting profile to $::current_profile_number"
 		#set profile $::current_profile_number
 	}
 
@@ -2794,16 +2733,14 @@ proc preview_profile {} {
 		}
 
 		if {[info exists thisprofile(profile_title)] != 1} {
-			msg "Corrupt profile file to preview: '$d'"
+			msg -WARNING "Corrupt profile file to preview: '$d'"
 			return
 		}
 
 
 		if {[ifexists thisprofile(profile_hide)] == 1} {
-			#msg "unhiding profile: '$profile'"
 			set thisprofile(profile_hide) 0
 		} else {
-			#msg "hiding profile: '$profile'"
 			set thisprofile(profile_hide) 1
 		}
 		save_array_to_file thisprofile $fn 
@@ -2811,7 +2748,6 @@ proc preview_profile {} {
 
 		# need to save and restore the scrollbar value, because we're refilling the listbox to show hide/show state change
 		set oldscrollbarbalue [$::profiles_scrollbar get]
-		#puts "oldscrollbarbalue: $oldscrollbarbalue"
 		fill_profiles_listbox
 		unset -nocomplain ::filling_profiles 
 
@@ -2838,7 +2774,7 @@ proc send_de1_settings_soon  {} {
 		if {[info exists ::save_settings_to_de1_id] == 1} {
 			after cancel $::save_settings_to_de1_id; 
 			unset -nocomplain ::save_settings_to_de1_id
-			msg "cancelled extra de1_send"
+			msg -NOTICE "send_de1_settings_soon: cancelled extra de1_send"
 		}
 
 		set ::save_settings_to_de1_id [after 500 save_settings_to_de1]
@@ -2848,7 +2784,6 @@ proc send_de1_settings_soon  {} {
 
 
 proc profile_has_changed_set_colors {} {
-	#msg "profile_has_changed_set_colors : $::settings(profile_has_changed) [stacktrace]"
 
 	if {$::settings(profile_has_changed) == 1} {
 		update_de1_explanation_chart
@@ -2911,13 +2846,11 @@ proc profile_has_changed_set args {
 	# if one the scroll bars has been touched by a human (not by the page display code) then mark the profile as having been changed
 	if {[lsearch -exact [stackprocs] "page_show"] == -1 && [lsearch -exact [stackprocs] "update_onscreen_variables"] == -1} {
 		set ::settings(profile_has_changed) 1
-		#puts "profile_has_changed_set:\n[stacktrace]"
 	} else {
-		#puts "profile_has_changed_set:\n[stacktrace]"
+		# pass 
 	}
 
 	#profile_has_changed_set_colors
-	#puts "profile_has_changed_set:\n[stacktrace]"
 }
 
 
@@ -2927,7 +2860,8 @@ proc profile_has_not_changed_set args {
 
 proc load_settings_vars {fn} {
 
-	msg "load_settings_vars $fn"
+
+	msg -NOTICE "load_settings_vars $fn"
 
 	# default to no temp steps, so as to migrate older profiles that did not have this setting, and not accidentally enble this feature on them
 	unset -nocomplain ::settings(espresso_temperature_steps_enabled) 
@@ -2942,29 +2876,44 @@ proc load_settings_vars {fn} {
 
 	catch {
 		foreach {k v} [encoding convertfrom utf-8 [read_binary_file $fn]] {
-			#puts "$k $v"
 			#set ::settings($k) $v
 			set temp_settings($k) $v
 		}
 	}
 
+
 	if {[ifexists temp_settings(settings_profile_type)] == "settings_2c" && [ifexists temp_settings(final_desired_shot_weight)] != "" && [ifexists temp_settings(final_desired_shot_weight_advanced)] == "" } {
-		msg "Using a default for final_desired_shot_weight_advanced from final_desired_shot_weight of [ifexists temp_settings(final_desired_shot_weight)]"
+		msg -NOTICE "load_settings_vars: Using a default" \
+			"for final_desired_shot_weight_advanced" \
+			"from final_desired_shot_weight of" \
+			[ifexists temp_settings(final_desired_shot_weight)]
 		set temp_settings(final_desired_shot_weight_advanced) [ifexists temp_settings(final_desired_shot_weight)]
 	}
 
 	# pre-set the shot volume, to the shot weight, if importing an old shot definition that doesn't have a an end volume 
 	if {[ifexists temp_settings(final_desired_shot_volume)] == ""} {
-		msg "pre-set the shot volume, to the shot weight, if importing an old shot definition that doesn't have a an end volume "
+		msg -NOTICE "load_settings_vars: pre-set the shot volume,"\
+			"to the shot weight, if importing an old shot definition" \
+			"that doesn't have a an end volume"
 		set temp_settings(final_desired_shot_volume) [ifexists temp_settings(final_desired_shot_weight)]
 	}
 
-	if {[ifexists ::temp_settings(black_screen_saver)] == 1} {
+	# properly reset beverage_type if not provided in the profile, o/w the beverage_type of the last profile with it
+	#	defined will be persisted throughout all subsequent shots.
+	if { ![info exists temp_settings(beverage_type)] } {
+		set temp_settings(beverage_type) {}
+	}
+		
+	if {[ifexists temp_settings(black_screen_saver)] == 1} {
 		# we've moved the "black screen saver" feature from its own dedicated variable to now be a setting of "0 minutes" on the screen saver change timer
 		# this line is simply for backward compatiblity, moving the old setting to a new one
 		set temp_settings(final_desired_shot_volume) 0
 		set temp_settings(saver_brightness) 0		
 	}
+
+
+	# we accidentally saved water temp in profiles for about a year and then decided we didn't want that, so remove it from profiles if it's there
+	unset -nocomplain temp_settings(water_temperature) 
 
 	catch {
 		array set ::settings [array get temp_settings]
@@ -2974,6 +2923,7 @@ proc load_settings_vars {fn} {
 	set ::setting(disable_long_press) 1
 
 	update_de1_explanation_chart
+
 
 }
 
@@ -2996,7 +2946,7 @@ proc save_settings_vars {fn varlist} {
 }
 
 proc profile_vars {} {
- 	return { advanced_shot espresso_temperature_steps_enabled author espresso_hold_time preinfusion_time espresso_pressure espresso_decline_time pressure_end espresso_temperature espresso_temperature_0 espresso_temperature_1 espresso_temperature_2 espresso_temperature_3 settings_profile_type flow_profile_preinfusion flow_profile_preinfusion_time flow_profile_hold flow_profile_hold_time flow_profile_decline flow_profile_decline_time flow_profile_minimum_pressure preinfusion_flow_rate profile_notes water_temperature final_desired_shot_volume final_desired_shot_weight final_desired_shot_weight_advanced tank_desired_water_temperature final_desired_shot_volume_advanced profile_title profile_language preinfusion_stop_pressure profile_hide final_desired_shot_volume_advanced_count_start bean_brand bean_type grinder_setting grinder_dose_weight grinder_model beverage_type}
+ 	return { advanced_shot espresso_temperature_steps_enabled author espresso_hold_time preinfusion_time espresso_pressure espresso_decline_time pressure_end espresso_temperature espresso_temperature_0 espresso_temperature_1 espresso_temperature_2 espresso_temperature_3 settings_profile_type flow_profile_preinfusion flow_profile_preinfusion_time flow_profile_hold flow_profile_hold_time flow_profile_decline flow_profile_decline_time flow_profile_minimum_pressure preinfusion_flow_rate profile_notes final_desired_shot_volume final_desired_shot_weight final_desired_shot_weight_advanced tank_desired_water_temperature final_desired_shot_volume_advanced profile_title profile_language preinfusion_stop_pressure profile_hide final_desired_shot_volume_advanced_count_start beverage_type maximum_pressure maximum_pressure_range_advanced maximum_flow_range_advanced maximum_flow maximum_pressure_range_default maximum_flow_range_default}
 }
 
 
@@ -3032,17 +2982,28 @@ proc save_profile {} {
 		set profile_filename $::settings(profile_filename) 
 	} else {
 		# if they change the description of the profile, then save it to a new name
-		set profile_filename [clock seconds]
+		# replace prior usage of unformatted seconds with sanitized profile name and append with formatted time if file exists
+		set profile_filename [::profile::filename_from_title $::settings(profile_title)]
+		set profile_timestamp [clock format [clock seconds] -format %Y%m%d_%H%M%S] 
+		if {[file exists "[homedir]/profiles/${profile_filename}.tcl"] == 1} {
+			append profile_filename "_" $profile_timestamp
+		}
 	}
 	
 	set fn "[homedir]/profiles/${profile_filename}.tcl"
+	
+	if {[write_file $fn ""] == 0} {
+		set fn "[homedir]/profiles/${profile_timestamp}.tcl"
+	}
 
 	# set the title back to its title, after we display SAVED for a second
 	# moves the cursor to the end of the seletion after showing the "saved" message.
 	after 1000 "set ::settings(profile_title) \{$::settings(profile_title)\}; $::globals(widget_profile_name_to_save) icursor 999"
 
+	# Save V2 of profiles in parallel
+	::profile::save "[homedir]/profiles_v2/${profile_filename}.json"
+
 	if {[save_settings_vars $fn [profile_vars]] == 1} {
-		#set ::settings(profile) $profile_name_to_save
 		set ::settings(profile) $::settings(profile_title)
 
 		fill_profiles_listbox 
@@ -3063,77 +3024,39 @@ proc save_espresso_rating_to_history {} {
 	save_this_espresso_to_history {} {}
 }
 
+::de1::event::listener::after_flow_complete_add \
+	[lambda {event_dict} {
+		save_this_espresso_to_history \
+			[dict get $event_dict previous_state] \
+			[dict get $event_dict this_state] \
+		} ]
 
-# Lazy way of decoupling from "package require" ordering.
-after idle {after 0 {register_state_change_handler Espresso Idle save_this_espresso_to_history}}
-
-proc format_espresso_for_history {} {
-
-		#set clock [clock seconds]
-		if {[info exists ::settings(espresso_clock)] != 1} {
-			# in theory, this should never occur.
-			msg "This espresso's start time was not recorded. Possibly we didn't get the bluetooth message of state change to espresso."
-			set ::settings(espresso_clock) [clock seconds]
-		}
-		
-		set clock $::settings(espresso_clock)
-		set name [clock format $clock]
-
-		set espresso_data {}
-		set espresso_data "name [list $name]\n"
-		set espresso_data "clock $clock\n"
-		#set espresso_data "final_espresso_weight $::de1(final_espresso_weight)\n"
-
-		#set espresso_data "settings [array get ::settings]\n"
-
-		append espresso_data "espresso_elapsed {[espresso_elapsed range 0 end]}\n"
-		append espresso_data "espresso_pressure {[espresso_pressure range 0 end]}\n"
-		append espresso_data "espresso_weight {[espresso_weight range 0 end]}\n"
-		append espresso_data "espresso_flow {[espresso_flow range 0 end]}\n"
-		append espresso_data "espresso_flow_weight {[espresso_flow_weight range 0 end]}\n"
-		append espresso_data "espresso_flow_weight_raw {[espresso_flow_weight_raw range 0 end]}\n"
-		append espresso_data "espresso_temperature_basket {[espresso_temperature_basket range 0 end]}\n"
-		append espresso_data "espresso_temperature_mix {[espresso_temperature_mix range 0 end]}\n"
-		append espresso_data "espresso_water_dispensed {[espresso_water_dispensed range 0 end]}\n"
-
-		append espresso_data "espresso_pressure_goal {[espresso_pressure_goal range 0 end]}\n"
-		append espresso_data "espresso_flow_goal {[espresso_flow_goal range 0 end]}\n"
-		append espresso_data "espresso_temperature_goal {[espresso_temperature_goal range 0 end]}\n"		
-
-		# format settings nicely so that it is easier to read and parse
-		append espresso_data "settings {\n"
-	    foreach k [lsort -dictionary [array names ::settings]] {
-	        set v $::settings($k)
-	        append espresso_data [subst {\t[list $k] [list $v]\n}]
-	    }
-	    append espresso_data "}\n"
-
-	    # things associated with the machine itself
-		append espresso_data "machine {\n"
-	    foreach k [lsort -dictionary [array names ::de1]] {
-	        set v $::de1($k)
-	        append espresso_data [subst {\t[list $k] [list $v]\n}]
-	    }
-	    append espresso_data "}\n"
-
-		return $espresso_data
-	
-}
 
 
 proc save_this_espresso_to_history {unused_old_state unused_new_state} {
-	puts "save_this_espresso_to_history "
+	msg -DEBUG "save_this_espresso_to_history (entry)"
 	# only save shots that have at least 5 data points
 	if {!$::settings(history_saved) && [espresso_elapsed length] > 5 && [espresso_pressure length] > 5 && $::settings(should_save_history) == 1} {
 
-		set espresso_data [format_espresso_for_history]
-		set fn "[homedir]/history/[clock format $::settings(espresso_clock) -format "%Y%m%dT%H%M%S"].shot"
+		#TODO disable once v2 shotfiles are stable
+		#if {$::settings(create_legacy_shotfiles) == 1} {
+			set espresso_data [::shot::create_legacy]
+			set fn "[homedir]/history/[clock format $::settings(espresso_clock) -format "%Y%m%dT%H%M%S"].shot"
+			write_file $fn $espresso_data
+		#}
+
+		set espresso_data [::shot::create]
+		set fn "[homedir]/history_v2/[clock format $::settings(espresso_clock) -format "%Y%m%dT%H%M%S"].json"
 		write_file $fn $espresso_data
-		msg "Save this espresso to history"
+		msg -NOTICE "Saved this espresso to history"
 
 		set ::settings(history_saved) 1
 	} else {
-		msg "Not saved to history $::settings(history_saved) - [espresso_elapsed length] - [espresso_pressure length] - $::settings(should_save_history) "
+		msg -NOTICE "Not saved to history:" \
+			"history_saved: $::settings(history_saved)" \
+			"Time samples: [espresso_elapsed length]" \
+			"Pres samples: [espresso_pressure length]" \
+			"should_save_history: $::settings(should_save_history)"
 	}
 }
 
@@ -3141,13 +3064,39 @@ proc ghc_required {} {
 	if {$::settings(ghc_is_installed) != 0 && $::settings(ghc_is_installed) != 1 && $::settings(ghc_is_installed) != 2 && $::settings(ghc_is_installed) != 4} {
 		return 1
 	}
+	if {$::undroid == 1 && $::android == 0} {
+		return 0
+	}
 	return 0
-
 }
 
 proc start_text_if_espresso_ready {} {
 	set num $::de1(substate)
 	set substate_txt $::de1_substate_types($num)
+
+	if {$substate_txt == "ready" && $::de1(device_handle) != 0} {
+		
+		if {[ghc_required]} {
+			# display READY instead of START, because they have to tap the group head to start, they cannot tap the tablet, due to UL compliance limits
+			return [translate "READY"]
+		}
+		return [translate "START"]
+	}
+	return [translate "WAIT"]
+}
+
+proc start_text_if_steam_ready {} {
+	if {$::settings(steam_disabled) == 1} {
+		return [translate "DISABLED"]
+	}
+
+	if {[steamtemp] < 125} {
+		return [translate "HEATING"]
+	}
+
+	set num $::de1(substate)
+	set substate_txt $::de1_substate_types($num)
+
 	if {$substate_txt == "ready" && $::de1(device_handle) != 0} {
 		
 		if {[ghc_required]} {
@@ -3173,6 +3122,29 @@ proc restart_text_if_espresso_ready {} {
 
 }
 
+proc restart_text_if_steam_ready {} {
+
+	if {$::settings(steam_disabled) == 1} {
+		return [translate "DISABLED"]
+	}
+
+
+	if {[steamtemp] < 125} {
+		return [translate "HEATING"]
+	}
+
+	set num $::de1(substate)
+	set substate_txt $::de1_substate_types($num)
+	if {$substate_txt == "ready" && $::de1(device_handle) != 0} {
+		if {[ghc_required]} {
+			# display READY instead of START, because they have to tap the group head to start, they cannot tap the tablet, due to UL compliance limits
+			return [translate "READY"]
+		}
+		return [translate "RESTART"]
+	}
+	return [translate "WAIT"]
+
+}
 proc stop_text_if_espresso_stoppable {} {
 	set num $::de1(substate)
 	set substate_txt $::de1_substate_types($num)
@@ -3241,15 +3213,15 @@ proc seconds_text {num} {
 }
 
 
-proc seconds_text {num} {
+proc seconds_text_abbreviated {num} {
 	if {$num == 0} {
 		return [translate "off"]
 	} elseif {$num == 1} {
-		return [subst {$num [translate "second"]}]
+		return [subst {$num [translate "sec"]}]
 	} elseif {$num == 60} {
-		return [translate "1 minute"]
+		return [translate "1 min"]
 	} else {
-		return [subst {$num [translate "seconds"]}]
+		return [subst {$num [translate "sec"]}]
 	}
 }
 
@@ -3317,7 +3289,6 @@ proc scentone_category {english_category} {
 }
 
 proc scentone_selected { {category {}} } {
-	#puts "scent one: '$::settings(scentone)'"
 
 	set returnlist {}
 	foreach selected $::settings(scentone) {
@@ -3350,7 +3321,6 @@ proc scentone_selected { {category {}} } {
 
 
 proc scentone_translated_selection { } {
-	#puts "scent one: '$::settings(scentone)'"
 
 	set returnlist {}
 	foreach selected $::settings(scentone) {
@@ -3375,17 +3345,14 @@ proc round_to_half_integer {in} {
 
 
 proc check_firmware_update_is_available {} {
-	#msg "check_firmware_update_is_available"
 
 	#if {$::settings(ghc_is_installed) != 0} {
 		# ok to do v1.3 fw update
-		#msg "v1.3 can do fw updates at the moment"
 		#if {$::settings(force_fw_update) != 1} {
 			#set ::de1(firmware_update_button_label) "Up to date"
 			#return ""
 		#}
 	#} else {
-		#msg "No firmware updates at the moment for machines earlier than v1.3 unless forced to do so"
 		#if {$::settings(force_fw_update) != 1} {
 		#	set ::de1(firmware_update_button_label) "Up to date"
 		#	return ""
@@ -3394,23 +3361,23 @@ proc check_firmware_update_is_available {} {
 
 	if {[ifexists ::de1(firmware_crc)] == ""} {
 		set ::de1(firmware_crc) [crc::crc32 -filename [fwfile]]
-		msg "Firmware [fwfile] CRC is $::de1(firmware_crc)"
 	}
 
 	# obsolete method, comparing settings-saved CRC of last fw upload, to what DE1 reports as CRC
 	if {($::de1(firmware_crc) != [ifexists ::settings(firmware_crc)]) && $::de1(currently_updating_firmware) == ""} {
-		#msg "firmware CRCs are not the same"
 		##obsolete - set ::de1(firmware_update_button_label) "Firmware update available"
 	} else {
-		#msg "firmware CRCs are the same $::de1(firmware_crc) == [ifexists ::settings(firmware_crc)]"
+		# pass
 	}
 
 	set ::de1(firmware_update_button_label) "Up to date"
 
 	# new method, directly comparing the incremented version number
 	if {[ifexists ::de1(Firmware_file_Version)] != "" && [ifexists ::settings(firmware_version_number)] != ""} {
-		if {[ifexists ::de1(Firmware_file_Version)] != [ifexists ::settings(firmware_version_number)]} {
+		if {[ifexists ::de1(Firmware_file_Version)] > [ifexists ::settings(firmware_version_number)]} {
 			set ::de1(firmware_update_button_label) "Firmware update available"
+		} elseif {[ifexists ::de1(Firmware_file_Version)] < [ifexists ::settings(firmware_version_number)]} {
+			set ::de1(firmware_update_button_label) "Firmware downgrade available"
 		}
 
 	}
@@ -3423,7 +3390,6 @@ proc check_firmware_update_is_available {} {
 proc firmware_update_eta_label {} {
 
 	if {[info exists ::de1(firmware_update_start_time)] != 1} {
-		#msg "firmware_update_eta_label - no ::de1(firmware_update_start_time)"
 		return
 	}
 
@@ -3451,9 +3417,7 @@ proc firmware_update_eta_label {} {
 
 
 proc firmware_uploaded_label {} {
-	#puts "firmware_uploaded_label firmware_uploaded_label"
 
-	#msg "currently_updating_firmware:  $::de1(currently_updating_firmware)/ $::de1(currently_erasing_firmware)"
 
 	if {($::de1(firmware_bytes_uploaded) == 0 || $::de1(firmware_update_size) == 0) && $::de1(currently_updating_firmware) != "1" && $::de1(currently_erasing_firmware) != "1"} {
 		if {$::de1(firmware_crc) == [ifexists ::settings(firmware_crc)]} {
@@ -3468,7 +3432,6 @@ proc firmware_uploaded_label {} {
 	}
 
 	set percentage [expr {(100.0 * $::de1(firmware_bytes_uploaded)) / $::de1(firmware_update_size)}]
-	#puts "percentage $percentage"
 	if {$percentage >= 100 && $::de1(currently_updating_firmware) == 0} {
 		#return "[translate {Turn your machine off and on again}]"
 		return [translate "Done"]
@@ -3503,7 +3466,7 @@ proc de1_version_string {} {
 		after 5000 [list info_page "[translate {Your DE1 firmware has been upgraded}]\n\n$version" [translate "Ok"]]
 	}
 	
-	array set modelarr [list 0 [translate "unknown"] 1 DE1 2 DE1+ 3 DE1PRO 4 DE1XL 5 DE1CAFE]
+	array set modelarr [list 0 [translate "unknown"] 1 DE1 2 DE1+ 3 DE1PRO 4 DE1XL 5 DE1CAFE 6 DE1XXL 7 DE1XXXL]
 
 	set brev ""
 	if {[ifexists ::settings(cpu_board_model)] != ""} {
@@ -3525,6 +3488,14 @@ proc de1_version_string {} {
 		append version ", [translate available]=[ifexists ::de1(Firmware_file_Version)]"
 	}
 
+	if { [package version de1app] ne ""  } {
+		append version ", [translate app]=v[package version de1app] [app_updates_policy_as_text]"
+	}
+
+	#if { [app_updates_policy_as_text] ne ""  } {
+	#	append version ", [translate {branch}]=[app_updates_policy_as_text]"
+	#}
+	
 	if {[ifexists v(BLE_Sha)] != "" && $::settings(firmware_sha) != [ifexists v(BLE_Sha)] } {
 		set ::settings(firmware_sha) $v(BLE_Sha)
 		save_settings
@@ -3643,7 +3614,7 @@ proc return_steam_flow_calibration {steam_flow} {
 	set in [expr {$steam_flow / 100.0}]
 
 	if {$::settings(enable_fluid_ounces) != 1} {
-		return [subst {[round_to_two_digits $in] [translate "mL/s"]}]
+		return [subst {[round_to_one_digits $in] [translate "mL/s"]}]
 	} else {
 		return [subst {[round_to_two_digits [ml_to_oz $in]] oz/s}]
 	}
@@ -3754,14 +3725,14 @@ foreach p [info procs] { set kpv(p,$p) 1 }
 
  	} 		
 
-	msg "Clearing default step temps"
+	msg -DEBUG "Clearing default step temps"
 	set ::settings(espresso_temperature_0) $::settings(espresso_temperature)
 	set ::settings(espresso_temperature_1) $::settings(espresso_temperature)
 	set ::settings(espresso_temperature_2) $::settings(espresso_temperature)
 	set ::settings(espresso_temperature_3) $::settings(espresso_temperature)
  	
 
- 	msg "toggle_espresso_steps_option $::settings(espresso_temperature_steps_enabled)"
+ 	msg -DEBUG "toggle_espresso_steps_option $::settings(espresso_temperature_steps_enabled)"
 
 }
 
@@ -3773,7 +3744,7 @@ proc round_and_return_step_temperature_setting {varname} {
 
 	set v [ifexists $varname]
 	if {$v == ""} {
-		msg "can't find variable $varname in round_and_return_step_temperature_setting"
+		msg -ERROR "can't find variable $varname in round_and_return_step_temperature_setting"
 		return ""
 	}
 
@@ -3781,15 +3752,14 @@ proc round_and_return_step_temperature_setting {varname} {
 }
 
 proc range_check_variable {varname low high} {
-	
-	#msg "range_check_variable $varname"
+
 	upvar $varname var
 	if {$var < $low} {
-		msg "variable $varname was under $low"
+		msg -DEBUG "range_check_variable: variable $varname was under $low"
 		set var $low
 	}
 	if {$var > $high} {
-		msg "variable $varname was over $high"
+		msg -DEBUG "range_check_variable: variable $varname was over $high"
 		set var $high
 	}
 }
@@ -3821,29 +3791,47 @@ proc range_check_shot_variables {} {
 	range_check_variable ::settings(final_desired_shot_volume) 0 2000
 	range_check_variable ::settings(final_desired_shot_volume_advanced) 0 2000
 	range_check_variable ::settings(final_desired_shot_volume_advanced_count_start) 0 20
-	range_check_variable ::settings(tank_desired_water_temperature) 0 60
-
-
-
-
-
+	range_check_variable ::settings(tank_desired_water_temperature) 0 45
 
 }
 
 proc change_espresso_temperature {amount} {
 
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
+	if {$::settings(settings_profile_type) == "settings_2a" || $::settings(settings_profile_type) == "settings_2b"} {
+		# pressure or flow profile
 
-		# if step temps are enabled then set the preinfusion start temp to the global temp 
-		# and then apply the relative change desired to each subsequent step
-		set ::settings(espresso_temperature) [expr {$::settings(espresso_temperature) + $amount}]
-		set ::settings(espresso_temperature_0) $::settings(espresso_temperature)			
-		set ::settings(espresso_temperature_1) [expr {$::settings(espresso_temperature_1) + $amount}]
-		set ::settings(espresso_temperature_2) [expr {$::settings(espresso_temperature_2) + $amount}]
-		set ::settings(espresso_temperature_3) [expr {$::settings(espresso_temperature_3) + $amount}]
+		if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
 
+			# if step temps are enabled then set the preinfusion start temp to the global temp 
+			# and then apply the relative change desired to each subsequent step
+			set ::settings(espresso_temperature) [expr {$::settings(espresso_temperature) + $amount}]
+			set ::settings(espresso_temperature_0) $::settings(espresso_temperature)			
+			set ::settings(espresso_temperature_1) [expr {$::settings(espresso_temperature_1) + $amount}]
+			set ::settings(espresso_temperature_2) [expr {$::settings(espresso_temperature_2) + $amount}]
+			set ::settings(espresso_temperature_3) [expr {$::settings(espresso_temperature_3) + $amount}]
+
+		} else {
+			set ::settings(espresso_temperature) [expr {$::settings(espresso_temperature) + $amount}]
+		}
 	} else {
-		set ::settings(espresso_temperature) [expr {$::settings(espresso_temperature) + $amount}]
+		# advanced shots need every step changed
+
+		set newshot {}
+		set cnt 0
+		foreach step $::settings(advanced_shot) {
+			incr cnt
+			array unset -nocomplain props
+			array set props $step
+			set temp [ifexists props(temperature)]
+			set newtemp [expr {$temp + $amount}]
+			if {$cnt == 1} {
+				set ::settings(espresso_temperature) $newtemp
+			}
+
+			set props(temperature) $newtemp
+			lappend newshot [array get props]
+		}
+		set ::settings(advanced_shot) $newshot
 	}
 
 	range_check_shot_variables
@@ -3864,5 +3852,30 @@ proc when_to_start_pour_tracking_advanced {} {
 		return [subst {[translate "After step"] $::settings(final_desired_shot_volume_advanced_count_start) - $stepdesc}]
 	} else {
 		return [translate "Immediately"]
+	}
+}
+
+proc app_updates_policy_as_text {} {
+	set progname "stable"
+    if {[ifexists ::settings(app_updates_beta_enabled)] == 1} {
+        set progname "beta"
+    } elseif {[ifexists ::settings(app_updates_beta_enabled)] == 2} {
+        set progname "nightly"
+    }
+
+ 	return [translate $progname]
+}
+
+proc set_resolution_height_from_width { {discard {}} } {
+	set ::settings(screen_size_height) [expr {int($::settings(screen_size_width)/1.6)}]
+
+	# check the width and make sure it is a multiple of 160. If not, pick the nearest setting.
+	for {set x [expr {$::settings(screen_size_width) - 0}]} {$x <= 2800} {incr x} {
+		set ratio [expr {$x / 160.0}]
+		if {$ratio == int($ratio)} {
+			set ::settings(screen_size_width) $x
+			set ::settings(screen_size_height) [expr {int($::settings(screen_size_width)/1.6)}]
+			break
+		}
 	}
 }

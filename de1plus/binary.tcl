@@ -1,4 +1,11 @@
-package provide de1_binary 1.0
+package provide de1_binary 1.1
+
+package require lambda
+
+package require de1_event 1.0
+package require de1_logging 1.0
+package require de1_profile 2.0
+
 
 
 # from http://wiki.tcl.tk/12148
@@ -23,12 +30,9 @@ proc fields::2form {spec array {endian ""}} {
    set form ""
    set vars {}
    foreach {name qual} $spec {
-   		#puts "name '$name' qual: '$qual'" 
 	   foreach {type count fendian signed extra} $qual break
-	   #puts "type:'$type' count:'$count' fendian:'$fendian' signed:'$signed' extra:'$extra'"
 	   set t [string index $type 0]
 	   set s [string index $signed 0]
-	   #puts "s: $s t: $t"
 	   
 	   if {$fendian == ""} {
 		   set fendian [string tolower [string index $endian 0]]
@@ -122,17 +126,12 @@ proc fields::2form {spec array {endian ""}} {
 		   append invars "\$$array\($name\) "
 	   }
 	   
-	   catch {
-	   	#msg "type: 'name=$name qual =$qual == $ty$s$count'"
-	   }
-
 	   if {$ty == "I" && $s ==  "s"} {
 	   	# signed integers are by default, and need no modifier
 	   	#set ty "s1"
 	   	set s ""
 	   }
 
-	   #puts "append '$ty$s$count'"
 	   append form $ty$s$count
    }
 
@@ -144,7 +143,6 @@ proc fields::2form {spec array {endian ""}} {
 proc ::fields::pack {spec array {endian ""}} {
    upvar $array Record
    foreach {form out in} [::fields::2form $spec Record $endian] break
-   #puts stderr "pack: binary format $form $in"
    return [eval binary format [list $form] {*}$in]
 }
 
@@ -152,7 +150,6 @@ proc ::fields::pack {spec array {endian ""}} {
 proc ::fields::unpack {packed spec array {endian ""}} {
    upvar $array Record
    foreach {form out in} [::fields::2form $spec Record $endian] break
-   #puts stderr "unpack: binary scan $form $out"
    return [binary scan $packed [list $form] {*}$out]
 }
 
@@ -180,7 +177,6 @@ proc ::fields::format {spec endian args} {
 
 proc return_de1_packed_steam_hotwater_settings {} {
 
-	#puts "xx $::settings(water_volume)"
 	set arr(SteamSettings) [expr {0 & 0x80 & 0x40}]
 
 	# turn the steam heater off completely, if the heater is set to below 130ºC
@@ -189,7 +185,11 @@ proc return_de1_packed_steam_hotwater_settings {} {
 		set steam_temperature 0
 	}
 
-	set arr(TargetSteamTemp) [convert_float_to_U8P0 $steam_temperature]
+	if {$::settings(steam_disabled) != 1} {
+		set arr(TargetSteamTemp) [convert_float_to_U8P0 $steam_temperature]
+	} else {
+		set arr(TargetSteamTemp) [convert_float_to_U8P0 0]
+	}
 	set arr(TargetSteamLength) [convert_float_to_U8P0 $::settings(steam_timeout)]
 	set arr(TargetHotWaterTemp) [convert_float_to_U8P0 $::settings(water_temperature)]
 	
@@ -298,11 +298,27 @@ proc decent_scale_generic_read_spec {} {
 	return $spec
 }
 
+proc decent_scale_generic_read_spec_v12 {} {
+	set spec {
+		model {char {} {} {unsigned} {}}
+		command {char {} {} {unsigned} {}}
+		data3 {char {} {} {unsigned} {}}
+		data4 {char {} {} {unsigned} {}}
+		data5 {char {} {} {unsigned} {}}
+		data6 {char {} {} {unsigned} {}}
+		data7 {char {} {} {unsigned} {}}
+		data8 {char {} {} {unsigned} {}}
+		data9 {char {} {} {unsigned} {}}
+		xor {char {} {} {unsigned} {}}
+	}
+	return $spec
+}
+
 proc decent_scale_weight_read_spec {} {
 	set spec {
 		model {char {} {} {unsigned} {}}
 		wtype {char {} {} {unsigned} {}}
-		weight {Short {} {} {signed} {}}
+		weight {Short {} {} {} {}}
 		rate {Short {} {} {unsigned} {}}
 		xor {char {} {} {unsigned} {}}
 	}
@@ -313,12 +329,29 @@ proc decent_scale_weight_read_spec2 {} {
 	set spec {
 		model {char {} {} {unsigned} {}}
 		wtype {char {} {} {unsigned} {}}
-		weight {Short {} {} {unsigned} {}}
+		weight {Short {} {} {} {}}
 		rate {Short {} {} {unsigned} {}}
 		xor {char {} {} {unsigned} {}}
 	}
 	return $spec
 }
+
+proc decent_scale_weight_read_spec_v12 {} {
+	set spec {
+		model {char {} {} {unsigned} {}}
+		wtype {char {} {} {unsigned} {}}
+		weight {Short {} {} {} {}}
+		minutes {char {} {} {unsigned} {}}
+		seconds {char {} {} {unsigned} {}}
+		milliseconds {char {} {} {unsigned} {}}
+		unused1 {char {} {} {unsigned} {}}
+		unused2 {char {} {} {unsigned} {}}
+		xor {char {} {} {unsigned} {}}
+	}
+
+	return $spec
+}
+
 
 # typedef struct {
 #   U32 CheckSum;    // The checksum of the rest of the encrypted image. Includes "CheckSums" + "Data" fields, not "Header"
@@ -373,7 +406,7 @@ proc calibrate_spec {} {
 		CalCommand {char {} {} {unsigned} {}}
 		CalTarget {char {} {} {unsigned} {}}
 		DE1ReportedVal {Int {} {} {unsigned} {double(round(100*($val / 65536.0)))/100}}
-		MeasuredVal {Int {} {} {signed} {double(round(100*($val / 65536.0)))/100}}
+		MeasuredVal {Int {} {} {} {double(round(100*($val / 65536.0)))/100}}
 	}
 	return $spec
 }
@@ -438,7 +471,7 @@ proc bintest {} {
 
 
 	foreach {field val} [array get ShotSample] {
-		puts "$field : $val "
+		msg -DEBUG "$field : $val "
 	}
 
 }
@@ -504,7 +537,7 @@ proc convert_float_to_F8_1_7 {in} {
 
 	if {$in >= 12.75} {
 		if {$in > 127} {
-			puts "Numbers over 127 are not allowed this F8_1_7"
+			msg -ERROR "Numbers over 127 are not allowed this F8_1_7; limiting at 127"
 			set in 127
 		}
 		return [expr {round($in) | 128}]
@@ -566,6 +599,10 @@ proc make_shot_flag {enabled_features} {
 
 proc parse_shot_flag {num} {
 
+	if {$num == {}} {
+		return {}
+	}
+
 	set enabled_features {}
 
 	if {[expr {$num & 0x01}] } {
@@ -624,6 +661,13 @@ proc parse_binary_shotframe {packed destarrname} {
 	array set specarr $spec
 
    	::fields::unpack $packed $spec ShotSample bigeendian
+	if {$ShotSample(FrameToWrite) >= 32} {
+		set spec [spec_extshotframe]
+		array unset specarr *
+		array unset ShotSample *
+		array set specarr $spec
+		::fields::unpack $packed $spec ShotSample bigeendian
+	}
 	foreach {field val} [array get ShotSample] {
 		set specparts $specarr($field)
 		set extra [lindex $specparts 4]
@@ -740,7 +784,36 @@ proc spec_shotframe {} {
 	return $spec
 }
 
-proc make_chunked_packed_shot_sample {hdrarrname framenames} {
+proc spec_extshotframe {} {
+	set spec {
+		FrameToWrite {char {} {} {unsigned} {$val}}
+		MaxFlowOrPressure {char {} {} {unsigned} {$val / 16.0}}
+		MaxFoPRange {char {} {} {unsigned} {$val / 16.0}}
+		Pad1  {char {} {} {unsigned} {$val}}
+		Pad2  {char {} {} {unsigned} {$val}}
+		Pad3  {char {} {} {unsigned} {$val}}
+		Pad4  {char {} {} {unsigned} {$val}}
+		Pad5  {char {} {} {unsigned} {$val}}
+	}
+	return $spec
+}
+
+proc spec_shottail {} {
+	# Unused. Use highest bit to enable / disable preinfusion tracking
+	#MaxTotalVolume {char {} {} {unsigned} {$val }}
+	set spec {
+		FrameToWrite {char {} {} {unsigned} {$val}}
+		MaxTotalVolume {Short {} {} {unsigned} {[convert_bottom_10_of_U10P0 $val]}}
+		Pad1  {char {} {} {unsigned} {$val}}
+		Pad2  {char {} {} {unsigned} {$val}}
+		Pad3  {char {} {} {unsigned} {$val}}
+		Pad4  {char {} {} {unsigned} {$val}}
+		Pad5  {char {} {} {unsigned} {$val}}
+	}
+	return $spec
+}
+
+proc make_chunked_packed_shot_sample {hdrarrname framenames extension_framenames tail_framename} {
 	upvar $hdrarrname hdrarr
 
 	set packed_header [::fields::pack [spec_shotdescheader] hdrarr]
@@ -748,18 +821,24 @@ proc make_chunked_packed_shot_sample {hdrarrname framenames} {
 	set packed_frames {}
 
 	foreach framearrname $framenames {
-		#puts "framearrname: $framearrname"
 		upvar $framearrname $hdrarrname
 		lappend packed_frames [::fields::pack [spec_shotframe] $hdrarrname]
 	}
+
+	foreach framearrname $extension_framenames {
+		upvar $framearrname $hdrarrname
+		lappend packed_frames [::fields::pack [spec_extshotframe] $hdrarrname]
+	}
+
+	upvar $tail_framename tailarr
+	lappend packed_frames [::fields::pack [spec_shottail] tailarr]
+
 	return [list $packed_header $packed_frames]
 }
 
 
 
-proc de1_packed_shot_advanced {} {
-
-	puts "de1_packed_shot_advanced"
+proc de1_packed_shot {shot_list} {
 
 	set hdr(HeaderV) 1
 	set hdr(MinimumPressure) 0
@@ -767,15 +846,47 @@ proc de1_packed_shot_advanced {} {
 
 	set cnt 0
 
+	array set profile $shot_list
+
 	# for now, we are defaulting to IgnoreLimit as our starting flag, because we are not setting constraints of max pressure or max flow
 	set frame_names ""
-	foreach step $::settings(advanced_shot) {
+	set extension_frames ""
+
+	set this_profile $profile(advanced_shot)
+
+	if {[ifexists ::settings(insert_preinfusion_pause)] == 1} {
+
+		msg -DEBUG "Prefixing profile with a 2 seconds slow start preinfusion pause"
+
+        set pause [list \
+            name [translate "Pause"] \
+            temperature $::settings(espresso_temperature) \
+            sensor "coffee" \
+            pump "flow" \
+            transition "fast" \
+            pressure 0 \
+            flow 0 \
+            seconds 2 \
+            volume 0 \
+            exit_if 0 \
+            exit_pressure_over 0 \
+            exit_pressure_under 0 \
+            exit_flow_over 6 \
+            exit_flow_under 0 \
+        ]
+
+        set this_profile [concat [list $pause] $this_profile]
+
+	}
+
+
+	foreach step $this_profile {
 		unset -nocomplain props
 		array set props $step
 
 		set frame_name "frame_$cnt"
+		set extension_frame "ext_frame_$cnt"
 		lappend frame_names $frame_name
-
 
 		set features {IgnoreLimit}
 
@@ -830,196 +941,71 @@ proc de1_packed_shot_advanced {} {
 		array set $frame_name [list FrameLen [convert_float_to_F8_1_7 $props(seconds)]]
 		array set $frame_name [list TriggerVal [convert_float_to_U8P4 $TriggerVal]]
 
-		# MaxVol feature has been disabled 5/11/18
-		array set $frame_name [list MaxVol [convert_float_to_U10P0 0]]
-		#set props(volume) 10
-		#array set $frame_name [list MaxVol [convert_float_to_U10P0 $props(volume)]]
+		# max water volume feature, per-step
+		array set $frame_name [list MaxVol [convert_float_to_U10P0 $props(volume)]]
 
+		#Extension Frame
+		if {[ifexists props(max_flow_or_pressure)] != 0 && [ifexists props(max_flow_or_pressure)] != {}} {
+			array set $extension_frame [list FrameToWrite [expr $cnt + 32]]
+			array set $extension_frame [list MaxFlowOrPressure [convert_float_to_U8P4 $props(max_flow_or_pressure)]]
+			array set $extension_frame [list MaxFoPRange [convert_float_to_U8P4 $props(max_flow_or_pressure_range)]]
+			array set $extension_frame [list Pad1 0]
+			array set $extension_frame [list Pad2 0]
+			array set $extension_frame [list Pad3 0]
+			array set $extension_frame [list Pad4 0]
+			array set $extension_frame [list Pad5 0]
+
+			lappend extension_frames $extension_frame
+			msg -DEBUG "Settings extension frame for " $cnt [array get $extension_frame]
+		}
 		incr cnt
 	}
 
 	set hdr(NumberOfFrames) $cnt
 	
 	# advanced shots can define when to start counting pour
-	set NumberOfPreinfuseFrames [ifexists ::settings(final_desired_shot_volume_advanced_count_start)]
+	set NumberOfPreinfuseFrames [ifexists profile(final_desired_shot_volume_advanced_count_start)]
 	if {$NumberOfPreinfuseFrames == ""} {
 		set NumberOfPreinfuseFrames 0
 	}
+
+	if {[ifexists ::setting(insert_preinfusion_pause)] == 1} {
+		incr NumberOfPreinfuseFrames
+	}
 	set hdr(NumberOfPreinfuseFrames) $NumberOfPreinfuseFrames
 
-	return [make_chunked_packed_shot_sample hdr $frame_names]
+	set tail(FrameToWrite) $cnt
+	set tail(MaxTotalVolume) 0
+	set tail(Pad1) 0
+	set tail(Pad2) 0
+	set tail(Pad3) 0
+	set tail(Pad4) 0
+	set tail(Pad5) 0
 
-}
+	return [make_chunked_packed_shot_sample hdr $frame_names $extension_frames tail]
 
-proc de1_packed_shot_flow {} {
-
-	set hdr(HeaderV) 1
-	set hdr(MinimumPressure) 0
-	set hdr(MaximumFlow) [convert_float_to_U8P4 6]
-
-
-	set temp_bump_time_seconds $::settings(temp_bump_time_seconds)
-
-
-	set mixtempflag ""
-	set hdr(NumberOfFrames) 4
-	set hdr(NumberOfPreinfuseFrames) 2
-
-
-	#####################################################################################
-	# preinfusion 2 second temp bump step, if needed
-	set frame1(FrameToWrite) 0
-	set frame1(Flag) [make_shot_flag "CtrlF DoCompare DC_GT IgnoreLimit $mixtempflag"] 
-	set frame1(SetVal) [convert_float_to_U8P4 $::settings(preinfusion_flow_rate)]
-	
-	# this frame is OFF unless needed, in which case it is just 2 seconds long
-	set frame1(FrameLen) [convert_float_to_F8_1_7 0]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame1(FrameLen) [convert_float_to_F8_1_7 $temp_bump_time_seconds]
-	}
-
-	set frame1(MaxVol) [convert_float_to_U10P0 0]
-	set frame1(TriggerVal) [convert_float_to_U8P4 $::settings(preinfusion_stop_pressure)]
-	set frame1(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame1(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_0)]
-	}
-
-	#####################################################################################
-	# after temp bump step, still in preinfusion if needed
-	set frame2(FrameToWrite) 1
-	set frame2(Flag) [make_shot_flag "CtrlF DoCompare DC_GT IgnoreLimit $mixtempflag"] 
-	set frame2(SetVal) [convert_float_to_U8P4 $::settings(preinfusion_flow_rate)]
-	set frame2(MaxVol) [convert_float_to_U10P0 0]
-	set frame2(TriggerVal) [convert_float_to_U8P4 $::settings(preinfusion_stop_pressure)]
-	set frame2(FrameLen) [convert_float_to_F8_1_7 $::settings(preinfusion_time)]
-	set frame2(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set second_frame_len [expr {$::settings(preinfusion_time) - $temp_bump_time_seconds}]		
-		if {$second_frame_len < 0} { 
-			set second_frame_len 0
-		}
-		set frame2(FrameLen) [convert_float_to_F8_1_7 $second_frame_len]
-		set frame2(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_1)]
-	}
-
-
-	#####################################################################################
-	# hold
-	set frame3(FrameToWrite) 2
-	set frame3(Flag) [make_shot_flag "CtrlF IgnoreLimit $mixtempflag"] 
-	set frame3(SetVal) [convert_float_to_U8P4 $::settings(flow_profile_hold)]
-	set frame3(FrameLen) [convert_float_to_F8_1_7 $::settings(espresso_hold_time)]
-	set frame3(TriggerVal) 0
-	set frame3(MaxVol) [convert_float_to_U10P0 0]
-	set frame3(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame3(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_2)]
-	}
-
-	#####################################################################################
-	# decline
-	set frame4(FrameToWrite) 3
-	set frame4(Flag) [make_shot_flag "CtrlF IgnoreLimit Interpolate $mixtempflag"] 
-	set frame4(SetVal) [convert_float_to_U8P4 $::settings(flow_profile_decline)]
-	set frame4(FrameLen) [convert_float_to_F8_1_7 $::settings(espresso_decline_time)]
-	set frame4(MaxVol) [convert_float_to_U10P0 0]
-	set frame4(TriggerVal) 0
-	set frame4(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame4(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_3)]
-	}
-
-	return [make_chunked_packed_shot_sample hdr [list frame1 frame2 frame3 frame4]]
 }
 
 
 # return two values as a list, with the 1st being the packed header, and the 2nd value itself
 # being a list of packed frames
-proc de1_packed_shot {} {
+proc de1_packed_shot_wrapper { {override {}} } {
 
-	if {[ifexists ::settings(settings_profile_type)] == "settings_2b"} {
-		return [de1_packed_shot_flow]
-	} elseif {([ifexists ::settings(settings_profile_type)] == "settings_2c" || [ifexists ::settings(settings_profile_type)] == "settings_2c2")} {
-		return [de1_packed_shot_advanced]
-	}
-
-	set hdr(HeaderV) 1
-	set hdr(MinimumPressure) 0
-	set hdr(MaximumFlow) [convert_float_to_U8P4 6]
-
-	set mixtempflag ""
-	set hdr(NumberOfFrames) 4
-	set hdr(NumberOfPreinfuseFrames) 2
-
-	set temp_bump_time_seconds $::settings(temp_bump_time_seconds)
-
-	#####################################################################################
-	# preinfusion 2 second temp bump step, if needed
-	set frame1(FrameToWrite) 0
-	set frame1(Flag) [make_shot_flag "CtrlF DoCompare DC_GT IgnoreLimit $mixtempflag"] 
-	set frame1(SetVal) [convert_float_to_U8P4 $::settings(preinfusion_flow_rate)]
-	
-	# this frame is OFF unless needed, in which case it is just 2 seconds long
-	set frame1(FrameLen) [convert_float_to_F8_1_7 0]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame1(FrameLen) [convert_float_to_F8_1_7 $temp_bump_time_seconds]
-	}
-
-	set frame1(MaxVol) [convert_float_to_U10P0 0]
-	set frame1(TriggerVal) [convert_float_to_U8P4 $::settings(preinfusion_stop_pressure)]
-	set frame1(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame1(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_0)]
-	}
-
-	#####################################################################################
-	# after temp bump step, still in preinfusion if needed
-	set frame2(FrameToWrite) 1
-	set frame2(Flag) [make_shot_flag "CtrlF DoCompare DC_GT IgnoreLimit $mixtempflag"] 
-	set frame2(SetVal) [convert_float_to_U8P4 $::settings(preinfusion_flow_rate)]
-	set frame2(MaxVol) [convert_float_to_U10P0 0]
-	set frame2(TriggerVal) [convert_float_to_U8P4 $::settings(preinfusion_stop_pressure)]
-	set frame2(FrameLen) [convert_float_to_F8_1_7 $::settings(preinfusion_time)]
-	set frame2(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set second_frame_len [expr {$::settings(preinfusion_time) - $temp_bump_time_seconds}]		
-		if {$second_frame_len < 0} { 
-			set second_frame_len 0
+	if {$override == "cool"} {
+		# set first frame temperature to 5C 
+		array set coolsettings [array get ::settings]
+		set coolsettings(espresso_temperature) 1
+		set coolsettings(espresso_temperature_0) 1
+		return [de1_packed_shot [::profile::pressure_to_advanced_list coolsettings]]
+	} else {
+		if {[ifexists ::settings(settings_profile_type)] == "settings_2b"} {
+			return [de1_packed_shot [::profile::flow_to_advanced_list]]
+		} elseif {([ifexists ::settings(settings_profile_type)] == "settings_2c" || [ifexists ::settings(settings_profile_type)] == "settings_2c2")} {
+			return [de1_packed_shot [::profile::settings_to_advanced_list]]
+		} else {
+			return [de1_packed_shot [::profile::pressure_to_advanced_list]]
 		}
-		set frame2(FrameLen) [convert_float_to_F8_1_7 $second_frame_len]
-		set frame2(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_1)]
 	}
-
-	#####################################################################################
-	# hold
-	set frame3(FrameToWrite) 2
-	set frame3(Flag) [make_shot_flag "IgnoreLimit $mixtempflag"] 
-	set frame3(SetVal) [convert_float_to_U8P4 $::settings(espresso_pressure)]
-	set frame3(FrameLen) [convert_float_to_F8_1_7 $::settings(espresso_hold_time)]
-	set frame3(TriggerVal) 0
-	set frame3(MaxVol) [convert_float_to_U10P0 0]
-	set frame3(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame3(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_2)]
-	}
-
-
-	#####################################################################################
-	# decline
-	set frame4(FrameToWrite) 3
-	set frame4(Flag) [make_shot_flag "IgnoreLimit Interpolate $mixtempflag"] 
-	set frame4(SetVal) [convert_float_to_U8P4 $::settings(pressure_end)]
-	set frame4(FrameLen) [convert_float_to_F8_1_7 $::settings(espresso_decline_time)]
-	set frame4(TriggerVal) 0
-	set frame4(MaxVol) [convert_float_to_U10P0 0]
-	set frame4(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature)]
-	if {[ifexists ::settings(espresso_temperature_steps_enabled)] == 1} {
-		set frame4(Temp) [convert_float_to_U8P1 $::settings(espresso_temperature_3)]
-	}
-
-	return [make_chunked_packed_shot_sample hdr [list frame1 frame2 frame3 frame4]]
-
 }
 
 
@@ -1144,10 +1130,7 @@ proc parse_firmware_file_header {packed destarrname} {
 			set Version($field) [expr $extra]
 		}
 	}
-
 }
-
-
 
 proc parse_map_request {packed destarrname} {
 	upvar $destarrname Version
@@ -1328,219 +1311,11 @@ proc bintest2 {} {
 
 	foreach field [lsort [array names ShotSample]] {
 		set val $ShotSample($field)
-		puts "$field : $val "
+		msg -DEBUG "$field : $val "
 	}
 
 }
 
-proc obsolete_get_timer {state substate} {
-
-  set timerkey "$::de1_num_state_reversed($state)-$::de1_substate_types_reversed($substate)"
-  set timer 0
-
-  catch {
-	set timer $::timers($timerkey)
-  }
-
-  #puts "$timerkey - timer $state $substate : $timer [array get ::timers]"
-  return $timer
-}
-
-set ::previous_FrameNumber -1
-proc update_de1_shotvalue {packed} {
-
-	if {[string length $packed] < 7} {
-		# this should never happen
-		msg "ERROR: short packed message"
-		return
-	}
-
-  	# the timer stores hundreds of a second, so we take the half cycles, divide them by hertz/2 to get seconds, and then multiple that all by 100 to get 100ths of a second, stored as an int
-	set spec_old {
-		Timer {Short {} {} {unsigned} {int(100 * ($val / ($::de1(hertz) * 2.0)))}}
-		GroupPressure {char {} {} {unsigned} {$val / 16.0}}
-		GroupFlow {char {} {} {unsigned} {$val / 16.0}}
-		MixTemp {Short {} {} {unsigned} {$val / 256.0}}
-		HeadTemp {Short {} {} {unsigned} {$val / 256.0}}
-		SetMixTemp {Short {} {} {unsigned} {$val / 256.0}}
-		SetHeadTemp {Short {} {} {unsigned} {$val / 256.0}}
-		SetGroupPressure {char {} {} {unsigned} {$val / 16.0}}
-		SetGroupFlow {char {} {} {unsigned} {$val / 16.0}}
-		FrameNumber {char {} {} {unsigned} {}}
-		SteamTemp {Short {} {} {unsigned} {$val / 256.0}}
-	}
-
-	# HeatTemp is a 24bit number, which Tcl doesn't have, so we grab it as 3 chars and manually convert it to a number	
-  	set spec {
-		Timer {Short {} {} {unsigned} {int(100 * ($val / ($::de1(hertz) * 2.0)))}}
-		GroupPressure {Short {} {} {unsigned} {$val / 4096.0}}
-		GroupFlow {Short {} {} {unsigned} {$val / 4096.0}}
-		MixTemp {Short {} {} {unsigned} {$val / 256.0}}
-		HeadTemp1 {char {} {} {unsigned} {}}
-		HeadTemp2 {char {} {} {unsigned} {}}
-		HeadTemp3 {char {} {} {unsigned} {}}
-		SetMixTemp {Short {} {} {unsigned} {$val / 256.0}}
-		SetHeadTemp {Short {} {} {unsigned} {$val / 256.0}}
-		SetGroupPressure {char {} {} {unsigned} {$val / 16.0}}
-		SetGroupFlow {char {} {} {unsigned} {$val / 16.0}}
-		FrameNumber {char {} {} {unsigned} {}}
-		SteamTemp {char {} {} {unsigned} {}}
-  	}
-
-  	if {[use_old_ble_spec] == 1} {
-	   	array set specarr $spec_old
-		::fields::unpack $packed $spec_old ShotSample bigeendian
-	} else {
-	   	array set specarr $spec
-		::fields::unpack $packed $spec ShotSample bigeendian
-	}
-
-  	foreach {field val} [array get ShotSample] {
-		set specparts $specarr($field)
-		set extra [lindex $specparts 4]
-		if {$extra != ""} {
-		  	set ShotSample($field) [expr $extra]
-		}
-	}
-
-  	if {[info exists ShotSample(SteamTemp)] != 1} {
-  		# if we get no steam temp then this is the old BLE spec and auto-adjust to doing so, but discard this first temperature report as part of this auto-adjusting
-	 	set ::ble_spec 0.9
-	 	return
-	 }
-
-	#msg "update_de1_shotvalue [array get ShotSample]"
-
-	#this is the number of milliseconds between BLE updates
-	set delta 0
-
-	#set ::de1(timer) $ShotSample(Timer)
-	if {[info exists ::previous_timer] != 1} {
-		# we throw out the first shot sample update because we don't have a previous time to copare it to, to calculate difference-between-updates
-		msg "previous timer was undefined so settings to $ShotSample(Timer)"
-		set ::previous_timer $ShotSample(Timer)
-		return
-	} elseif {$::previous_timer == 0} {
-		#msg "previous timer was zero so settings to $ShotSample(Timer)"
-		set ::previous_timer $ShotSample(Timer)
-		return
-	}
-
-	set delta [expr {$ShotSample(Timer) - $::previous_timer}]
-	set ::previous_timer $ShotSample(Timer)
-
-	if {$::previous_FrameNumber != [ifexists ShotSample(FrameNumber)]} {
-		# draw a vertical line at each frame change
-
-		if {$::previous_FrameNumber > 0} {
-			# don't draw a line a the first frame change
-			set ::state_change_chart_value [expr {$::state_change_chart_value * -1}]
-		}
-		set ::de1(current_frame_number) $ShotSample(FrameNumber)
-
-		if {$::settings(settings_profile_type) == "settings_2a"} {
-			if {$ShotSample(FrameNumber) == 0 || $ShotSample(FrameNumber) == 1} {
-				set framedesc [translate "1: preinfuse"]
-			} elseif {$ShotSample(FrameNumber) == 2} {
-				set framedesc [translate "2: rise and hold"]
-			} else {
-				set framedesc [translate "3: decline"]
-			}
-		} elseif {$::settings(settings_profile_type) == "settings_2b"} {
-			if {$ShotSample(FrameNumber) == 0 || $ShotSample(FrameNumber) == 1} {
-				set framedesc [translate "1: preinfuse"]
-			} elseif {$ShotSample(FrameNumber) == 2} {
-				set framedesc [translate "2: hold"]
-			} else {
-				set framedesc [translate "3: decline"]
-			}
-		} elseif {$::settings(settings_profile_type) == "settings_2c"} {
-			array set thisadvstep [lindex $::settings(advanced_shot) $::de1(current_frame_number)]
-			set framedesc "[expr {1 + $::de1(current_frame_number)}]: [ifexists thisadvstep(name)]"
-		} else {
-			set framedesc "-"
-		}
-
-		if {$::de1(substate) == $::de1_substate_types_reversed(preinfusion) || $::de1(substate) == $::de1_substate_types_reversed(pouring)} {
-			set ::settings(current_frame_description) $framedesc
-			display_popup_android_message_if_necessary $framedesc
-		} else {
-			#set ::settings(current_frame_description) "$::de1(state) $::de1(substate) $::de1(current_frame_number)"
-			set ::settings(current_frame_description) ""
-		}
-		#puts "framedesc $framedesc"
-	}
-
-	set ::previous_FrameNumber [ifexists ShotSample(FrameNumber)]
-
-	if {$::de1(substate) == $::de1_substate_types_reversed(ending) } {
-		set ::settings(current_frame_description) [translate "ending"]
-		set ::previous_FrameNumber -1
-	} elseif {$::de1(substate) == $::de1_substate_types_reversed(heating) || $::de1(substate) == $::de1_substate_types_reversed(stabilising) || $::de1(substate) == $::de1_substate_types_reversed(final heating)} {
-		set ::settings(current_frame_description) [translate "heating"]
-		set ::previous_FrameNumber -1
-	}
-
-	#set ::settings(current_frame_description) "$::de1(state) $::de1(substate) [ifexists ShotSample(FrameNumber)]"
-	
-
-
-  	if {[use_old_ble_spec] == 1} {
-		set ::de1(head_temperature) $ShotSample(HeadTemp)
-	} else {
-		#set ::de1(head_temperature) [expr { $ShotSample(HeadTemp1) + ($ShotSample(HeadTemp2) / 256.0) + ($ShotSample(HeadTemp3) / 65536.0) }]
-		set ::de1(head_temperature) [convert_3_char_to_U24P16 $ShotSample(HeadTemp1) $ShotSample(HeadTemp2) $ShotSample(HeadTemp3)]
-	}
-
-	set ::de1(mix_temperature) $ShotSample(MixTemp)
-	set ::de1(steam_heater_temperature) $ShotSample(SteamTemp)
-	#msg "Steam temp, $::de1(steam_heater_temperature)"
-
-	set water_volume_dispensed_since_last_update [expr {$ShotSample(GroupFlow) * ($delta/100.0)}]
-	if {$water_volume_dispensed_since_last_update < 0} {
-		# occasionally the water volume dispensed numbers are negative, which causes bugs downstream
-		# not sure why this happens, but maybe it originates in the DE1 firmware.
-		# this if() statement is an attempt to catch this problem and solve it.  Not sure if it will succeed.
-		set water_volume_dispensed_since_last_update 0
-		msg "WARNING negative water volume dispensed: $water_volume_dispensed_since_last_update"
-	} elseif {$water_volume_dispensed_since_last_update > 1000} {
-		# occasionally the water volume dispensed numbers are odd, which causes bugs downstream
-		# not sure why this happens, but maybe it originates in the DE1 firmware.
-		# this if() statement is an attempt to catch this problem and solve it.  Not sure if it will succeed.
-
-		# not sure if HUGE numbers ever happen, but this will catch it, correct for it, and log it.
-		set water_volume_dispensed_since_last_update 0
-		msg "WARNING HUGE amount of water volume dispensed: $water_volume_dispensed_since_last_update"
-	}
-	set ::de1(volume) [expr {$::de1(volume) + $water_volume_dispensed_since_last_update}]
-
-	# keep track of water volume during espresso, but not steam
-	if {$::de1_num_state($::de1(state)) == "Espresso"} {
-		if {$::de1(substate) == $::de1_substate_types_reversed(preinfusion)} {	
-			set ::de1(preinfusion_volume) [expr {$::de1(preinfusion_volume) + $water_volume_dispensed_since_last_update}]
-		} elseif {$::de1(substate) == $::de1_substate_types_reversed(pouring) } {	
-			set ::de1(pour_volume) [expr {$::de1(pour_volume) + $water_volume_dispensed_since_last_update}]
-		}
-	}
-
-	set ::de1(flow_delta) [expr {$::de1(flow) - $ShotSample(GroupFlow)}]
-	set ::de1(flow) $ShotSample(GroupFlow)
-
-
-	
-	set ::de1(pressure_delta) [expr {$::de1(pressure) - $ShotSample(GroupPressure)}]
-	set ::de1(pressure) $ShotSample(GroupPressure)
-
-
-	set ::de1(goal_flow) $ShotSample(SetGroupFlow)
-	set ::de1(goal_pressure) $ShotSample(SetGroupPressure)
-	set ::de1(goal_temperature) $ShotSample(SetHeadTemp)
-
-	append_live_data_to_espresso_chart
-
-	# return the parsed array of what we just received so that we can display it to a debug log if desired
-	return [array get ShotSample]
-}
 
 proc convert_3_char_to_U24P16 {char1 char2 char3} {
 	return [expr {$char1 + ($char2 / 256.0) + ($char3 / 65536.0) }]
@@ -1554,213 +1329,13 @@ proc convert_4_char_to_U32P0 {char0 char1 char2 char3} {
 	return [expr {($char0 * 16777216) + ($char1 * 65536) + ($char2 * 256) + $char3}]
 }
 
-set previous_de1_substate 0
-set state_change_chart_value 10000000
-set previous_espresso_flow 0
-set previous_espresso_flow_time [espresso_millitimer]
 
-proc append_live_data_to_espresso_chart {} {
-
-    if {$::de1_num_state($::de1(state)) == "Steam"} {
-		if {$::de1(substate) == $::de1_substate_types_reversed(pouring) || $::de1(substate) == $::de1_substate_types_reversed(preinfusion)} {
-		#puts "append_live_data_to_espresso_chart $::de1(pressure)"
-			steam_pressure append [round_to_two_digits $::de1(pressure)]
-			steam_flow append [round_to_two_digits $::de1(flow)]
-
-			#steam_pressure append 3
-			#steam_flow append 1
-
-			#steam_temperature append [round_to_two_digits [expr {$::de1(steam_heater_temperature)/100.0}]]
-			if {$::settings(enable_fahrenheit) == 1} {
-				steam_temperature append [round_to_integer [celsius_to_fahrenheit $::de1(steam_heater_temperature)]]
-			} else {
-				steam_temperature append [round_to_integer $::de1(steam_heater_temperature)]
-			}
-				#return [subst {[round_to_integer [celsius_to_fahrenheit $in]]\u00BAF}]
-
-			#steam_temperature append [round_to_two_digits [expr {$::de1(steam_heater_temperature)/100.0}]]
-			#steam_temperature append 1.5
-			#steam_temperature append $::de1(steam_heater_temperature)
-			#set millitime [steam_pour_timer]
-			steam_elapsed append  [expr {[steam_pour_millitimer]/1000.0}]
-		}
-    	return 
-
-    } elseif {$::de1_num_state($::de1(state)) != "Espresso"} {
-    	# we only store chart data during espresso
-    	# we could theoretically store this data during steam as well, if we want to have charts of steaming temperature and pressure
-    	return 
-    }
-
-#@	global previous_de1_substate
-	#global state_change_chart_value
-
-  	if {$::de1(substate) == $::de1_substate_types_reversed(pouring) || $::de1(substate) == $::de1_substate_types_reversed(preinfusion)} {
-		# to keep the espresso charts going
-		#if {[millitimer] < 500} { 
-		  # need to make sure we don't append data from an earlier time, as that destroys the chart
-		 # return
-		#}
-
-		#if {[espresso_elapsed length] > 0} {
-		  #if {[espresso_elapsed range end end] > [expr {[millitimer]/1000.0}]} {
-			#puts "discarding chart data after timer reset"
-			#clear_espresso_chart
-			#return
-		  #}
-		#}
-
-		set millitime [espresso_millitimer]
-
-		if {$::de1(substate) == 4 || $::de1(substate) == 5} {
-
-			set mtime [expr {$millitime/1000.0}]
-			set last_elapsed_time_index [expr {[espresso_elapsed length] - 1}]
-			set last_elapsed_time 0
-			if {$last_elapsed_time_index >= 0} {
-				set last_elapsed_time [espresso_elapsed range $last_elapsed_time_index $last_elapsed_time_index]
-			}
-			#puts "last_elapsed_time: $mtime / $last_elapsed_time"
-
-			if {$mtime > $last_elapsed_time} {
-				# this is for handling cases where a god shot has already loaded a time axis
-				espresso_elapsed append $mtime
-			}
-
-			if {$::de1(scale_weight) == ""} {
-				set ::de1(scale_weight) 0
-			}
-			espresso_weight append [round_to_two_digits $::de1(scale_weight)]
-			espresso_weight_chartable append [round_to_two_digits [expr {0.10 * $::de1(scale_weight)}]]
-
-			espresso_pressure append [round_to_two_digits $::de1(pressure)]
-			espresso_flow append [round_to_two_digits $::de1(flow)]
-			espresso_flow_2x append [round_to_two_digits [expr {2.0 * $::de1(flow)}]]
-
-			set resistance 0
-			catch {
-				# main calculation, based on laminar flow. # linear adjustment 
-				set resistance [round_to_two_digits [expr {$::de1(pressure) / pow($::de1(flow), 2) }]]
-			}
-			espresso_resistance append $resistance
-
-
-			if {$::de1(scale_weight_rate) != ""} {
-				# if a bluetooth scale is recording shot weight, graph it along with the flow meter
-				espresso_flow_weight append [round_to_two_digits $::de1(scale_weight_rate)]
-				espresso_flow_weight_raw append [round_to_two_digits $::de1(scale_weight_rate_raw)]
-				espresso_flow_weight_2x append [expr {2.0 * [round_to_two_digits $::de1(scale_weight_rate)] }]
-
-				set resistance_weight 0
-				catch {
-					if {$::de1(pressure) != 0 && $::de1(scale_weight_rate) != "" && $::de1(scale_weight_rate) != 0} {
-						# if the scale is available, use that instead of the flowmeter calculation, to determine resistance
-						set resistance_weight [round_to_two_digits [expr {$::de1(pressure) / pow($::de1(scale_weight_rate), 2) }]]
-					}
-				}
-
-				espresso_resistance_weight append $resistance_weight
-			}
-
-
-
-
-			#set elapsed_since_last [expr {$millitime - $::previous_espresso_flow_time}]
-			#puts "elapsed_since_last: $elapsed_since_last"
-			#set flow_delta [expr { 10 * ($::de1(flow)  - $::previous_espresso_flow) }]
-			set flow_delta [diff_flow_rate]
-			set negative_flow_delta_for_chart 0
-
-
-			if {$::de1(substate) == $::de1_substate_types_reversed(preinfusion)} {				
-				# don't track flow rate delta during preinfusion because the puck is absorbing water, and so the numbers aren't useful (likely just pump variability)
-				set flow_delta 0
-			}
-
-			if {$flow_delta > 0} {
-
-			    if {$::settings(enable_negative_flow_charts) == 1} {
-					# experimental chart from the top
-					set negative_flow_delta_for_chart [expr {6.0 - (10.0 * $flow_delta)}]
-					set negative_flow_delta_for_chart_2x [expr {12.0 - (10.0 * $flow_delta)}]
-					espresso_flow_delta_negative append $negative_flow_delta_for_chart
-					espresso_flow_delta_negative_2x append $negative_flow_delta_for_chart_2x
-				}
-
-				espresso_flow_delta append 0
-				#puts "negative flow_delta: $flow_delta ($negative_flow_delta_for_chart)"
-			} else {
-				espresso_flow_delta append [expr {abs(10*$flow_delta)}]
-
-			    if {$::settings(enable_negative_flow_charts) == 1} {
-					espresso_flow_delta_negative append 6
-					espresso_flow_delta_negative_2x append 12
-					#puts "flow_delta: $flow_delta ($negative_flow_delta_for_chart)"
-				}
-			}
-
-			set pressure_delta [diff_pressure]
-			espresso_pressure_delta append [expr {abs ($pressure_delta) / $millitime}]
-
-			set ::previous_espresso_flow $::de1(flow)
-			set ::previous_espresso_pressure $::de1(pressure)
-
-			espresso_temperature_mix append [return_temperature_number $::de1(mix_temperature)]
-			espresso_temperature_basket append [return_temperature_number $::de1(head_temperature)]
-			espresso_state_change append $::state_change_chart_value
-
-			set ::previous_espresso_flow_time $millitime
-
-			# don't chart goals at zero, instead take them off the chart
-			if {$::de1(goal_flow) == 0} {
-				espresso_flow_goal append "-1"
-				espresso_flow_goal_2x append "-1"
-			} else {
-				espresso_flow_goal append $::de1(goal_flow)
-				espresso_flow_goal_2x append [expr {2.0 * $::de1(goal_flow)}]
-			}
-
-			# don't chart goals at zero, instead take them off the chart
-			if {$::de1(goal_pressure) == 0} {
-				espresso_pressure_goal append "-1"
-			} else {
-				espresso_pressure_goal append $::de1(goal_pressure)
-			}
-
-			espresso_temperature_goal append [return_temperature_number $::de1(goal_temperature)]
-
-
-			set total_water_volume [expr {$::de1(preinfusion_volume) + $::de1(pour_volume)}]
-			set total_water_volume_divided [expr {0.1 * ($::de1(preinfusion_volume) + $::de1(pour_volume))}]
-			espresso_water_dispensed append $total_water_volume_divided
-
-			# stop espresso at a desired water volume, if set to > 0, but only for advanced shots
-			if {$::settings(settings_profile_type) == "settings_2c" && $::settings(final_desired_shot_volume_advanced) > 0 && $::de1(pour_volume) >= $::settings(final_desired_shot_volume_advanced)} {
-				# for advanced shots, it's TOTAL WATER VOLuME that is the trigger, since Preinfusion is not necessarily part of an advanced shot
-				msg "Water volume based Espresso stop was triggered at: $$::de1(pour_volume) ml > $::settings(final_desired_shot_volume_advanced) ml "
-			 	start_idle
-			 	say [translate {Stop}] $::settings(sound_button_in)	
-			 	#borg toast [translate "Total volume reached"]
-			 	borg toast [translate "Espresso volume reached"]
-			} elseif {$::settings(scale_bluetooth_address) == ""} {
-				# if no scale connected, potentially use volumetric to stop the shot
-
-			 	if {($::settings(settings_profile_type) == "settings_2a" || $::settings(settings_profile_type) == "settings_2b") && $::settings(final_desired_shot_volume) > 0 && $::de1(pour_volume) >= $::settings(final_desired_shot_volume)} {
-			 		# for FLOW and PRESSURE shots, we normally use preinfusion, so POUR VOLUME is very close to WEIGHT
-					msg "Water volume based Espresso stop was triggered at: $::de1(pour_volume) ml > $::settings(final_desired_shot_volume) ml"
-				 	start_idle
-				 	say [translate {Stop}] $::settings(sound_button_in)	
-				 	borg toast [translate "Espresso volume reached"]
-			 	}		
-			}
-		}
-  	}
-}  
 
 # System to plug-in handlers for state (not substate) changes.
-array set ::state_change_handlers {}
 
 proc register_state_change_handler {old_state_name new_state_name handler} {
+
+	msg -WARNING "DEPRECATED, see package de1_event: register_state_change_handler $old_state_name $new_state_name $handler"
   # Registers a state change handler for a specific state-to-state transition.
   #
   # Args:
@@ -1768,34 +1343,15 @@ proc register_state_change_handler {old_state_name new_state_name handler} {
   #   new_state_name: name for the "to" state.
   #   handler: callback that handles state transition.
   #     When invoked, old_state_name and new_state_name are added as arguments.
-  set event_key [make_state_change_event_key $::de1_num_state_reversed($old_state_name) $::de1_num_state_reversed($new_state_name)]
-  if {![info exists ::state_change_handlers($event_key)]} {
-    set ::state_change_handlers($event_key) [list]
-  }
-  lappend ::state_change_handlers($event_key) $handler
-}
 
-proc make_state_change_event_key {old_state new_state} {
-  # Warning: state change event does not have current substate stored in ::de1(substate).
-  # Handlers are not stored persistently, so no backward compatibility issue with changing this schema.
-  #
-  # Args:
-  #   old_state: integer representing old state.
-  #   new_state: integer representing new state.
-  return "${old_state},${new_state}"
-}
+	set lstr [format {lambda {event_dict} {
+		set ps [dict get $event_dict previous_state] ; set ts [dict get $event_dict this_state]
+		if { $ps == "%s" && $ts == "%s" } {%s $ps $ts}}} \
+			  $old_state_name $new_state_name $handler]
 
-proc emit_state_change_event {old_state new_state} {
-  # Asynchronously triggers all handlers.
-  set old_state_name $::de1_num_state($old_state)
-  set new_state_name $::de1_num_state($new_state)
-  set event_key [make_state_change_event_key $old_state $new_state]
-  if {[info exists ::state_change_handlers($event_key)]} {
-    foreach handler $::state_change_handlers($event_key) {
-      # No bracing so variables are expanded correctly.
-      after idle after 0 eval {*}$handler $old_state_name $new_state_name
-    }
-  }
+	msg -INFO "Rewritten as \[$lstr\]"
+
+	::de1::event::listener::on_major_state_change_add [{*}$lstr]
 }
 
 
@@ -1803,38 +1359,75 @@ proc parse_decent_scale_recv {packed destarrname} {
 	upvar $destarrname recv
 	unset -nocomplain recv
 
-   	::fields::unpack $packed [decent_scale_generic_read_spec] recv bigeendian
+	if {[string length $packed] == 7} {
+   		::fields::unpack $packed [decent_scale_generic_read_spec] recv bigeendian
+	} elseif {[string length $packed] == 10} {
+   		::fields::unpack $packed [decent_scale_generic_read_spec_v12] recv bigeendian
+	} else {
+		msg -DEBUG "Unexpected data length in Decentscale message: length=[string length $packed]"
+		return 
+	}
+
 
    	if {$recv(command) == 0xCE || $recv(command) == 0xCA} {
    		# weight comes as a short, so use a different parsing format in this case, otherwise just return bytes
-	   	#msg "Raw scale data: [array get recv]"
 
    		#unset -nocomplain recv
 	   	#::fields::unpack $packed [decent_scale_weight_read_spec] recv bigeendian
-	   	#msg "Parse1: [array get recv]"
-
+	   	set cmd $recv(command)
 
    		unset -nocomplain recv
-	   	::fields::unpack $packed [decent_scale_weight_read_spec2] recv bigeendian
+
+		if {[string length $packed] == 7} {
+		   	::fields::unpack $packed [decent_scale_weight_read_spec2] recv bigeendian
+		} elseif {[string length $packed] == 10} {
+		   	::fields::unpack $packed [decent_scale_weight_read_spec_v12] recv bigeendian
+
+		   	# convert timestamp into milliseconds and also store that in the data structure
+		   	set timestamp [expr { ($recv(minutes) * 600) + ($recv(seconds) * 10) + $recv(milliseconds) }]
+		   	set recv(timestamp) $timestamp
+		} else {
+			msg -DEBUG "Unexpected data length in Decentscale weight message: length=[string length $packed]"
+			return 
+		}
+
+	   	set recv(parsed) "weight"
+	   	set recv(command) $cmd
+
 	   	#::fields::unpack $packed [decent_scale_generic_read_spec] recv bigeendian
    	} elseif {$recv(command) == 0xAA} {
-   		msg "Decentscale BUTTON pressed: [array get recv]"
+	   	set recv(parsed) "button"
+   		msg -DEBUG "Decentscale BUTTON pressed: [array get recv]"
    	} elseif {$recv(command) == 0x0C} {
-   		unset -nocomplain recv
-	   	::fields::unpack $packed [decent_scale_timing_read_spec] recv bigeendian
-   		msg "Decentscale time received: [array get recv]"
+   		#unset -nocomplain recv
+	   	#::fields::unpack $packed [decent_scale_timing_read_spec] recv bigeendian
+	   	#set recv(parsed) "timer"
+   		#msg -DEBUG "Decentscale time received: [array get recv]"
+   		# feature not implemented in the firmware, removed from spec
+	   	set recv(parsed) "unknown"
+   		msg -DEBUG "Decentscale unexpected timer data received: [array get recv]"
+   	} else {
+   		#unset -nocomplain recv
+	   	#::fields::unpack $packed [decent_scale_timing_read_spec] recv bigeendian
+	   	#set recv(command) "unknown"
+	   	set recv(parsed) "unknown"
+   		msg -DEBUG "Decentscale unknown data received: [array get recv]"
    	}
 
 }
 
+
+# TODO: parse_state_change and update_de1_state should be moved to ::de1
+#	The large number of unqualified references to globals
+#	and contexts in which they are called makes it a lower priority
 
 proc parse_state_change {packed destarrname} {
 	upvar $destarrname ShotSample
 	unset -nocomplain ShotSample
 
 	set spec {
-		state char
-		substate char
+		state {char {} {} {unsigned} {}}
+		substate {char {} {} {unsigned} {}}
 	}
 	array set specarr $spec
 
@@ -1848,211 +1441,306 @@ proc parse_state_change {packed destarrname} {
 	}
 }
 
-#set ::previous_textstate ""
+
 proc update_de1_state {statechar} {
-	#::fields::unpack $statechar $spec msg bigeendian
+
+	# TODO: Get event_time from earlier in the processing chain
+
+	set event_time [expr { [clock milliseconds] / 1000.0 }]
+
 	parse_state_change $statechar msg
-	set textstate [ifexists ::de1_num_state([ifexists msg(state)])]
+
+	# Ignore "empty" state messages
+	# https://3.basecamp.com/3671212/buckets/7351439/messages/3239055806#__recording_3248555671
 
 	if {[info exists msg(state)] != 1} {
-		# fix from https://3.basecamp.com/3671212/buckets/7351439/messages/3239055806#__recording_3248555671
-		msg "Empty state message received"
+		msg -NOTICE "update_de1_state: Empty state message received"
 		return
 	}
-	#msg "update_de1_state '[ifexists ::previous_textstate]' '$textstate'"
 
-	#msg "update_de1_state [array get msg]"
+	set this_state [ifexists ::de1_num_state([ifexists msg(state)])]
+	set this_substate [ifexists ::de1_substate_types([ifexists msg(substate)])]
 
-	#puts "textstate: $textstate"
-	if {$msg(state) != $::de1(state)} {
-		msg "applying DE1 state change: $::de1(state) [array get msg] (now:$textstate) (was:[ifexists ::previous_textstate])"
-		emit_state_change_event $::de1(state) $msg(state)
-		set ::de1(state) $msg(state)
+	set previous_state [ifexists ::de1_num_state($::de1(state))]
+	set previous_substate [ifexists ::de1_substate_types($::de1(substate))]
 
-		if {$textstate == "Espresso"} {
-			reset_gui_starting_espresso
+	set event_dict [dict create \
+				event_time $event_time \
+				this_state $this_state \
+				this_substate $this_substate \
+				previous_state $previous_state \
+				previous_substate $previous_substate \
+			       ]
 
-			# When starting an espresso we are trying to reconnect to the scale just to be sure. This by far does not saturate the Android 5 tablets
-			#  but just to be sure it is feature gated
-			if { $::settings(reconnect_to_scale_on_espresso_start) && $::de1(scale_device_handle) == 0 && $::settings(scale_bluetooth_address) != ""} {
-				msg "try to connect to scale automatically (if it is currently disconnected)"
-				ble_connect_to_scale
+	# Update the global state for any consumers and timers, such as in callbacks
+	# Using `trace` on these is bad form as the app may not have caught up yet
+
+	set ::de1(state) $msg(state)
+	set ::de1(substate) $msg(substate)
+
+	set this_flow_phase [::de1::state::flow_phase $this_state $this_substate]
+	set previous_flow_phase [::de1::state::flow_phase $previous_state $previous_substate]
+
+	if { $this_flow_phase == "during" && $previous_flow_phase != "during" } {
+
+		switch $this_state {
+
+			Espresso {
+				start_espresso_timers
 			}
 
-		} elseif {$textstate == "Steam"} {
-			reset_gui_starting_steam
-		} elseif {$textstate == "HotWater"} {
-			reset_gui_starting_hotwater
-		} elseif {$textstate == "HotWaterRinse"} {
-			reset_gui_starting_hot_water_rinse
-		} elseif {$textstate == "Idle" && [ifexists ::previous_textstate] == "Steam"} {
-			msg "Scheduling check_if_steam_clogged"
-			after 3000 check_if_steam_clogged
+			Steam {
+				start_timer_steam_pour
+			}
+
+			HotWater {
+				start_timer_water_pour
+			}
+
+			HotWaterRinse {
+				start_timer_flush_pour
+			}
+
+		}
+	}
+
+	if { $this_flow_phase != "during" && $previous_flow_phase == "during" } {
+
+		switch $previous_state {
+
+			Espresso {
+				stop_espresso_timers
+			}
+
+			Steam {
+				stop_timer_steam_pour
+			}
+
+			HotWater {
+				stop_timer_water_pour
+			}
+
+			HotWaterRinse {
+				stop_timer_flush_pour
+			}
+		}
+	}
+
+	if {      ( $this_state == "Espresso" && $this_substate == "preinfusion" ) \
+	     && ! ( $previous_state == "Espresso" && $previous_substate == "preinfusion" ) } {
+
+		start_timer_espresso_preinfusion
+
+	}
+
+	if {    ! ( $this_state == "Espresso" && $this_substate == "preinfusion" ) \
+	     &&   ( $previous_state == "Espresso" && $previous_substate == "preinfusion" ) } {
+
+		stop_timer_espresso_preinfusion
+
+	}
+
+	if {      ( $this_state == "Espresso" && $this_substate == "pouring" ) \
+	     && ! ( $previous_state == "Espresso" && $previous_substate == "pouring" ) } {
+
+		start_timer_espresso_pour
+
+	}
+
+	if {    ! ( $this_state == "Espresso" && $this_substate == "pouring" ) \
+	     &&   ( $previous_state == "Espresso" && $previous_substate == "pouring" ) } {
+
+		stop_timer_espresso_pour
+
+	}
+
+
+
+	#
+	# Then start processing
+	#
+
+
+
+	if { $this_state != $previous_state } {
+
+		###
+		### Major state change
+		###
+
+		msg -INFO [format "DE1 major state change: %s, %s => %s, %s" \
+				   $previous_state $previous_substate \
+				   $this_state $this_substate]
+
+		::de1::event::apply::on_all_state_change_callbacks $event_dict
+		::de1::event::apply::on_major_state_change_callbacks $event_dict
+
+		switch $this_state {
+
+			Espresso {
+				# When starting an espresso we are trying to reconnect to the scale just to be sure.
+				# This by far does not saturate the Android 5 tablets
+				# but just to be sure it is feature gated
+
+				if { $::settings(reconnect_to_scale_on_espresso_start) \
+					     && $::de1(scale_device_handle) == 0 \
+					     && $::settings(scale_bluetooth_address) != ""} {
+
+					msg -INFO "try to connect to scale automatically (if it is currently disconnected)"
+					ble_connect_to_scale
+				}
+			}
+
+			Idle {
+				if { $previous_state == "Steam" } {
+					after 3000 check_if_steam_clogged
+					msg -INFO "Scheduled check_if_steam_clogged in 3 seconds"
+				}
+			}
+
+			Sleep {
+				if { $previous_state != "Sleep" } {
+					scale_disable_lcd
+				}
+			}
 		}
 
-		if {[ifexists ::previous_textstate] == "Sleep" && $textstate != "Sleep"} {
-			#msg "Coming back from SLEEP"
-			# if awakening from sleep, on Group Head Controller machines, this is not on on the tablet, and so we should
+		if { $previous_state == "Sleep" && $this_state != "Sleep"} {
+
+			# If awakening from sleep, on Group Head Controller machines,
+			# this is not on on the tablet, and so we should
 			# now try to connect to the scale upon awakening from sleep
+
 			if {$::de1(scale_device_handle) == 0 && $::settings(scale_bluetooth_address) != ""} {
-				msg "Back from sleep, try to connect to scale automatically (if it is currently disconnected)"
+				msg -INFO "Back from sleep, try to connect to scale automatically (if it is currently disconnected)"
 				ble_connect_to_scale
 			} else {
-				# don't need to tare on scale wakeup
-				# scale_tare
 				scale_enable_lcd
 			}
-		} elseif {[ifexists ::previous_textstate] != "Sleep" && $textstate == "Sleep"} {
-			scale_disable_lcd
 		}
+
+
+
+
+	} elseif { $this_substate != $previous_substate } {
+
+		###
+		### Substate change only
+		###
+
+		msg -INFO [format "DE1 substate change: %s, %s => %s, %s" \
+				   $previous_state $previous_substate \
+				   $this_state $this_substate]
+
+		::de1::event::apply::on_all_state_change_callbacks $event_dict
+
+	}
+
+	###
+	### Flow change events
+	###
+
+
+	if { $this_flow_phase != $previous_flow_phase } {
+
+		::de1::event::apply::on_flow_change_callbacks $event_dict
+	}
+
+	#
+	# after_flow_complete will trigger after
+	# $::settings(after_flow_complete_delay)
+	#     after transition to ending, but not before leaving a flow state
+	#     after transition out of a flow state, if not already pending or triggered
+	#
+	# Cases:
+	#
+	# Triggers on transition to ending:
+	#    timer fires after transition out of flow state -- apply
+	#    timer fires before transition out of flow -- wait for transition, then apply
+	# Transition directly to non-flow state:
+	#    set timer and apply when fires
+	#
+	# State 0 -- Ready
+	# State 1 -- Flow
+	# State 2 -- Pending with timer
+	# State 3 -- Waiting for Idle
+	#
+	# State 0:
+	#    Enter during-flow state ==> State 1
+	# State 1:
+	#    Leave during-flow state -- set timer ==> State 2
+	# State 2:
+	#    Timer fires, in non-flow state -- apply ==> State 0
+	#    Timer fires, in flow state -- ignore ==> State 3
+	# State 3:
+	#    Enter non-flow state -- apply ==> State 0
+	#
+
+
+	# TODO: Keep all this logic in one place (other half is in de1_de1.tcl in 1.34.x)
+
+
+	if { $this_flow_phase == "during" && $previous_flow_phase != "during" } {
+
+		# => State 1
+
+		# No other actions needed
+	}
+
+	if { $this_flow_phase != "during" && $previous_flow_phase == "during" } {
+
+		# State 1 ==> State 2
+
+		if { [::de1::event::apply::after_flow_complete_is_pending] } {
+
+			# Chosing not to cancel existing at this time; valid use cases unclear
+			# See notes before ::de1::event::apply::after_flow_complete_cancel_pending
+
+			msg -WARNING "Pending after_flow_complete callbacks. " \
+				[format "Second flow started before %g seconds?" \
+					 $::settings(after_flow_complete_delay)]
+		}
+
+
+		set ::de1::event::apply::_after_flow_complete_after_id \
+			[ after [expr { 1000 *  $::settings(after_flow_complete_delay) }] \
+				  [list ::de1::event::apply::_maybe_after_flow_complete_callbacks $event_dict]
+			 ]
+
+		set ::de1::event::apply::_after_flow_complete_holding_for_idle True
+
+		msg -DEBUG "after_flow_complete: Scheduled"
+
+	}
+
+	if { $::de1::event::apply::_after_flow_complete_holding_for_idle \
+		     && $::de1::event::apply::_after_flow_complete_after_id == "" \
+		     && $this_flow_phase == "" } {
+
+		# TODO: Decouple this from internal representation
+
+		set ::de1::event::apply::_after_flow_complete_holding_for_idle False
+
+		::de1::event::apply::after_flow_complete_callbacks $event_dict
+
+		msg -DEBUG "after_flow_complete: Applied deferred"
 	}
 
 
-  	if {[info exists msg(substate)] == 1} {
-		set current_de1_substate $msg(substate)
-		#set ::previous_de1_substate [ifexists de1(substate)]
 
-	  # substate of zero means no information, discard
-	  	if {$msg(substate) != $::de1(substate)} {
-			#msg "substate change: [array get msg]"
 
-			#if {$textstate == "Espresso"} {
+	###
+	### This looks wonky, but GUI will freeze if sent on every change
+	###
 
-			if {$current_de1_substate == 4 || ($current_de1_substate == 5 && $::previous_de1_substate != 4)} {
-				# tare the scale when the espresso starts and start the shot timer
-				#skale_tare
-				#skale_timer_off
-				if {$::timer_running == 0 && $textstate == "Espresso"} {
-					#start_timers
-					
-					#scale_tare
-					start_espresso_timers
-					after 200 scale_tare
-					#after 250 scale_timer_start
-					#set ::timer_running 1
-				}
-				
-				if {$textstate == "HotWaterRinse"} {
-					# tare the scale when doing a flush, in case they want to see how much water they put in (to preheat a cup)
-					scale_tare
-				}
-				
-				if {$textstate == "HotWater"} {
-					# tare the scale when doing a hot water pour, so they can compare it to the amount of water they asked for
-					scale_tare
-				}
-				
-			} elseif {($current_de1_substate != 5 || $current_de1_substate == 4) && $textstate == "Espresso"} {
-				# shot is ended, so turn timer off
-				if {$::timer_running == 1} {
-					#set ::timer_running 0
-					#scale_timer_stop
-					stop_espresso_timers
-				}
-			}
-			#}
+	if {[info exists msg(substate)] == 1} {
 
-			set ::de1(substate) $msg(substate)
-
-	  	}
-
-		if {$::previous_de1_substate == 4} {
-			stop_timer_espresso_preinfusion
-		} elseif {$::previous_de1_substate == 5} {
-			#msg "state $textstate / [ifexists ::previous_textstate]"
-
-			if {$textstate == "HotWater" || [ifexists ::previous_textstate] == "HotWater"} {
-				stop_timer_water_pour
-			} elseif {$textstate == "Steam" || [ifexists ::previous_textstate] == "Steam"} {
-				stop_timer_steam_pour
-
-			} elseif {$textstate == "Espresso" || [ifexists ::previous_textstate] == "Espresso"} {
-				stop_timer_espresso_pour
-				stop_espresso_timers
-			} elseif {$textstate == "HotWaterRinse" || [ifexists ::previous_textstate] == "HotWaterRinse"} {
-				stop_timer_flush_pour
-			} elseif {$textstate == "Idle"} {
-				# do nothing
-			} else {
-				msg "unknown timer stop: $textstate"
-				#zz12
-			}
-		} else {
-		}
-		
-		if {$current_de1_substate == 4} {
-			start_timer_espresso_preinfusion
-		} elseif {$current_de1_substate == 5 && $::previous_de1_substate != 5} {
-			if {$textstate == "HotWater"} {
-				start_timer_water_pour
-			} elseif {$textstate == "Steam"} {
-				start_timer_steam_pour
-			} elseif {$textstate == "HotWaterRinse"} {
-				start_timer_flush_pour
-			} elseif {$textstate == "Espresso"} {
-				start_timer_espresso_pour
-			} elseif {$textstate == "Idle"} {
-				# no idle timer needed
-			} else {
-				msg "unknown timer start: $textstate"
-			}
-		}
-		
-		# can be over-written by a skin
 		catch {
-			skins_page_change_due_to_de1_state_change $textstate
+			skins_page_change_due_to_de1_state_change $this_state
 		}
-
-		set ::previous_de1_substate $::de1(substate)
-	}
-
-	#set textstate $::de1_num_state($msg(state))
-	#if {$::previous_textstate != $::previous_textstate} {
-	#} else {
-	#	update
-	#}
-
-	set ::previous_textstate $textstate
-}
-
-
-proc page_change_due_to_de1_state_change {textstate} {
-	if {$textstate == "Idle"} {
-		page_display_change $::de1(current_context) "off"
-	} elseif {$textstate == "GoingToSleep"} {
-		page_display_change $::de1(current_context) "sleep" 
-	} elseif {$textstate == "Sleep"} {
-		page_display_change $::de1(current_context) "saver" 
-	} elseif {$textstate == "Steam"} {
-		page_display_change $::de1(current_context) "steam" 
-	} elseif {$textstate == "Espresso"} {
-		page_display_change $::de1(current_context) "espresso" 
-	} elseif {$textstate == "HotWater"} {
-		page_display_change $::de1(current_context) "water" 
-	} elseif {$textstate == "Refill"} {
-		page_display_change $::de1(current_context) "tankempty" 
-	} elseif {$textstate == "SteamRinse"} {
-		page_display_change $::de1(current_context) "steamrinse" 
-	} elseif {$textstate == "HotWaterRinse"} {
-		page_display_change $::de1(current_context) "hotwaterrinse" 
-	} elseif {$textstate == "Descale"} {
-		page_display_change $::de1(current_context) "descaling" 
-	} elseif {$textstate == "Clean"} {
-		page_display_change $::de1(current_context) "cleaning" 
-	} elseif {$textstate == "AirPurge"} {
-		page_display_change $::de1(current_context) "travel_do" 
 	}
 }
 
-
-
-set ble_spec 1.0
-proc use_old_ble_spec {} {
-	if {$::ble_spec < 1.0} {
-		return 1
-	}
-	return 0
-}
 
 proc convert_string_to_decimal {chrs} {
 	binary scan [encoding convertto ascii $chrs] c* x

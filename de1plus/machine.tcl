@@ -1,5 +1,15 @@
-package provide de1_machine 1.0
-package require de1_comms 1.0
+package provide de1_machine 1.2
+
+package require de1_comms 1.1
+package require de1_logging 1.0
+
+###
+### NB: The array ::de1() is a global variable and not in the namespace ::de1
+###
+###     The namespace ::de1 is described after the existing globals
+###
+
+
 #set ::debugging 0
 
 # ray's DE1 address (usb key #?)
@@ -26,8 +36,15 @@ array set ::de1 {
 	factory_calibration_flow {}
 	advanced_shot_moveone_enabled 1
     found    0
+    decentscale_timer_on 0
+    bluetooth_scale_connection_attempts_tried 0
+    refill_kit_detected {}
     scanning 1
+    usb_charger_on 1
     device_handle 0
+    scale_battery_level 100
+    scale_fw_version 0
+    scale_usb_powered 0
     language_rtl 0
     scale_device_handle 0
     decentscale_device_handle 0
@@ -58,11 +75,18 @@ array set ::de1 {
 	suuid_decentscale "0000FFF0-0000-1000-8000-00805F9B34FB"
 	cuuid_acaia_ips_age "00002A80-0000-1000-8000-00805F9B34FB"
 	suuid_acaia_ips "00001820-0000-1000-8000-00805F9B34FB"
+	cuuid_acaia_pyxis_status "49535343-1E4D-4BD9-BA61-23C647249616"
+	cuuid_acaia_pyxis_cmd "49535343-8841-43F4-A8D4-ECBE34729BB3"
+	suuid_acaia_pyxis "49535343-FE7D-4AE5-8FA9-9FAFD205E455"
 	suuid_felicita "0000FFE0-0000-1000-8000-00805F9B34FB"
 	cuuid_felicita "0000FFE1-0000-1000-8000-00805F9B34FB"
 	suuid_hiroiajimmy "06C31822-8682-4744-9211-FEBC93E3BECE"
 	cuuid_hiroiajimmy_cmd "06C31823-8682-4744-9211-FEBC93E3BECE"
 	cuuid_hiroiajimmy_status "06C31824-8682-4744-9211-FEBC93E3BECE"
+	suuid_eureka_precisa "0000FFF0-0000-1000-8000-00805F9B34FB"
+	cuuid_eureka_precisa_status "0000FFF1-0000-1000-8000-00805F9B34FB"
+	cuuid_eureka_precisa_cmd "0000FFF2-0000-1000-8000-00805F9B34FB"
+
 	cinstance 0
 	fan_threshold 0
 	tank_temperature_threshold 0
@@ -83,7 +107,8 @@ array set ::de1 {
 	widget_current_profile_name_color_normal "#ff6b6b"
 	widget_current_profile_name_color_changed "#969eb1"
 	water_level_mm_correction 5
-	scale_autostop_triggered 1
+	app_autostop_triggered True
+	app_stepskip_triggered False
 	water_level_full_point 40
 	connect_time 0
 	water_level 20
@@ -97,14 +122,15 @@ array set ::de1 {
 	serial_number 0
 	scale_sensor_weight 0
 	scale_weight {}
+	scale_timestamp 0
 	scale_weight_rate 0
 	scale_weight_rate_raw 0
 	final_water_weight 0
 	voltage 110
 	has_catering_kit 0
 	has_plumbing_kit 0
-	max_pressure 12
-	max_flowrate 6
+	max_pressure 12.0
+	max_flowrate 12.0
 	max_flowrate_v11 8
 	version ""
 	min_temperature 80
@@ -126,13 +152,15 @@ array set ::de1 {
 	pour_volume 0
 	water_time_min 1
 	steam_time_min 1
-	steam_time_max 250
+	steam_time_max 255
 	last_ping 0
 	steam_heater_temperature 150
 	connectivity "ble"
 }
 
 set ::de1(last_ping) [clock seconds]
+
+set ::globals(time_last_idle_update) [clock seconds]
 
 set ::de1(maxpressure) 12 
 
@@ -169,55 +197,36 @@ array set ::de1_cuuids_to_command_names {
 
 array set ::de1_command_names_to_cuuids [reverse_array ::de1_cuuids_to_command_names]
 
-
-#set ::de1(in_fw_update_mode) 1
-
-
-#namespace import blt::*
-#namespace import -force blt::tile::*
-
-
-#espresso_elapsed append 0
-#espresso_pressure append 0
-#espresso_flow append 0
-#espresso_temperature_mix append 0
-#espresso_temperature_basket append 0
-#espresso_state_change append 0
-
-#espresso_elapsed append 0 1 2
-#espresso_pressure append 0 1 4
-# espresso_pressure espresso_temperature_mix espresso_temperature_basket
-
-#global accelerometer
-#set accelerometer 0
-#if {[flight_mode_enable] == 1} {#
-#	set accelerometer 1
-#}
-
 array set ::settings {
 	enable_rise 0
+	smart_battery_charging 1
 	force_fw_update 0
 	preset_counter 1
 	screen_size_width {}
+	steam_two_tap_stop 0
 	ble_debug 0
 	tank_desired_water_temperature 0
 	screen_size_height {}
-	log_enabled 0
+	log_enabled True
 	app_updates_beta_enabled 0
 	current_frame_description {}
+	refill_kit_override -1
 	mmr_enabled 0	
 	default_font_calibration 0.5
 	log_fast 0
+	use_finger_down_for_tap 1
 	linear_resistance_adjustment 1
+	resistance_curve 0
+	weight_detail_curve 0
 	language en
 	display_time_in_screen_saver 0
+	insert_preinfusion_pause 0
 	steam_over_temp_threshold 180
 	disable_long_press 0
-	steam_over_pressure_threshold 5
-	automatically_ble_reconnect_forever_to_scale 0
+	steam_over_pressure_threshold 8
 	chart_total_shot_flow 1
-	tare_only_on_espresso_start 0
 	steam_over_pressure_count_trigger 10
+	do_async_update_check 0
 	heater_voltage ""
 	steam_over_temp_count_trigger 10
 	go_idle_before_all_operations 0
@@ -225,15 +234,20 @@ array set ::settings {
 	active_settings_tab settings_2a
 	espresso_temperature_steps_enabled 0
 	chart_total_shot_weight 1
+	calibration_flow_multiplier "1.000"
 	phase_1_flow_rate 20
 	phase_2_flow_rate 40
 	ghc_mode 0
 	fan_threshold 60
 	steam_flow 700
+	hotwater_flow 8.0
+	flush_flow 6.0
+	steam_disabled 0
+	flush_seconds 3.0
 	color_stage_1 "#c8e7d5"
 	color_stage_2 "#efdec2"
-	hot_water_idle_temp "850"
-	espresso_warmup_timeout "20"
+	hot_water_idle_temp "990"
+	espresso_warmup_timeout "10"
 	color_stage_3 "#edceca"
 	start_espresso_only_if_scale_connected 0
 	logfile "log.txt"
@@ -275,16 +289,16 @@ array set ::settings {
 	also_load_god_shot 1
 	advanced_shot {}
 	water_time_max 60
-	battery_medium_trigger 90
+	battery_medium_trigger_v2 30
 	battery_medium_brightness 70
-	battery_low_trigger 60
+	battery_low_trigger_v2 20
 	battery_low_brightness 50
-	battery_very_low_trigger 30
+	battery_very_low_trigger_v2 10
 	battery_very_low_brightness 10
 	orientation "landscape"
 	grinder_dose_weight 0
 	scentone {}
-	seconds_after_espresso_stop_to_continue_weighing 8
+	after_flow_complete_delay 5
 	display_volumetric_usage 0
 	one_tap_mode 0
 	allow_unheated_water 1
@@ -361,7 +375,7 @@ array set ::settings {
 	history_saved 0
 	should_save_history 1
 	pressure_end 4 
-	stop_weight_before_seconds 2.8
+	stop_weight_before_seconds 0.15
 	max_stop_at_weight 500
 	espresso_step_1 pressure
 	espresso_step_2 pressure
@@ -384,6 +398,8 @@ array set ::settings {
 	flow_rate_transition "smooth"
 	water_speed_type "flow"
 	speaking_pitch 1.0
+	show_only_most_popular_skins 1
+	most_popular_skins {Insight MimojaCafe Metric DSx SWDark4 MiniMetric}
 	sound_button_in 8
 	sound_button_out 11
 	profile_notes {}
@@ -404,6 +420,7 @@ array set ::settings {
 	flow_hold_stop_volumetric 100
 	flow_decline_stop_volumetric 100
 	pressure_decline_stop_volumetric 100
+	running_weight 0
 	steam_temperature 160
 	steam_timeout 120
 	skin "default"
@@ -418,6 +435,21 @@ array set ::settings {
 	scale_stop_at_half_shot 0
 	lock_screen_during_screensaver 0
 	enabled_plugins {}
+
+	maximum_flow 0
+	maximum_flow_range_default 1.0
+	maximum_pressure 0
+	maximum_pressure_range_default 0.9
+
+	maximum_flow_range_advanced 0.6
+	maximum_pressure_range_advanced 0.6
+	high_vibration_scale_filtering False
+	last_version "1.34"
+
+	create_legacy_shotfiles 0
+
+	show_scale_notifications 1
+	scale_timer_espresso_only 0
 }
 
 # default de1plus skin
@@ -433,13 +465,6 @@ set ::de1_device_list {}
 if { $settings(bluetooth_address) != ""} {
 	append_to_de1_list $settings(bluetooth_address) "DE1" "ble"
 }
-
-#msg "init was run '$::settings(scale_type)'"
-
-	#error "atomaxscale"
-# initial filling of BLE scale list
-#set ::scale_bluetooth_list $::settings(scale_bluetooth_address)
-
 
 array set ::de1_state {
 	Sleep \x00
@@ -463,6 +488,7 @@ array set ::de1_state {
     Clean \x12
     InBootLoader \x13
     AirPurge \x14
+	SchedIdle \x15
 }
 
 
@@ -488,11 +514,12 @@ array set ::de1_num_state {
   18 Clean
   19 InBootLoader
   20 AirPurge
+  21 SchedIdle
 }
 
 
 
-set ::scale_bluetooth_list ""
+set ::peripheral_device_list ""
 array set ::de1_num_state_reversed [reverse_array ::de1_num_state]
 
 
@@ -505,8 +532,82 @@ array set ::de1_substate_types {
 	4	"preinfusion"
 	5	"pouring"
 	6	"ending"
+	7	"Steaming"
+	8	"DescaleInit"
+	9	"DescaleFillGroup"
+	10	"DescaleReturn"
+	11	"DescaleGroup"
+	12	"DescaleSteam"
+	13	"CleanInit"
+	14	"CleanFillGroup"
+	15	"CleanSoak"
+	16	"CleanGroup"
 	17  "refill"
+	18	"PausedSteam"
+	19	"UserNotPresent"
+	20	"puffing"
+	200 "Error_NaN"
+	201 "Error_Inf"
+	202 "Error_Generic"
+	203 "Error_ACC"
+	204 "Error_TSensor"
+	205 "Error_PSensor"
+	206 "Error_WLevel"
+	207 "Error_DIP"
+	208 "Error_Assertion"
+	209 "Error_Unsafe"
+	210 "Error_InvalidParm"
+	211 "Error_Flash"
+	212 "Error_OOM"
+	213 "Error_Deadline"
+	214 "Error_HiCurrent"
+	215 "Error_LoCurrent"
+	216 "Error_BootFill"
 }
+
+
+
+array set ::de1_substate_type_description {
+	-   "starting"
+	0	"State is not relevant"
+	1	"Cold water is not hot enough. Heating hot water tank."
+	2	"Warm up hot water heater for shot."
+	3	"Stabilize mix temp and get entire water path up to temperature."
+	4	"Espresso only. Hot Water and Steam will skip this state."
+	5	"Water is flowing, in espresso, hot water or steam"
+	6	"The flush valve is now activated, only occurs in espresso"
+	7	"Steam only"
+	8	"Starting descale"
+	9	"get some descaling solution into the group and let it sit"
+	10	"descaling internals"
+	11	"descaling group"
+	12	"descaling steam"
+	13	"Starting clean"
+	14	"Fill the group"
+	15	"Wait for 60 seconds so we soak the group head"
+	16	"Flush through group"
+	17  "Have we given up on a refill"
+	18	"Are we paused in steam?"
+	200 "Something died with a NaN"
+	201 "Something died with an Inf"
+	202 "An error for which we have no more specific description"
+	203 "ACC not responding, unlocked, or incorrectly programmed"
+	204 "We are getting an error that is probably a broken temperature sensor"
+	205 "Pressure sensor error"
+	206 "Water level sensor error"
+	207 "DIP switches told us to wait in the error state."
+	208 "Assertion failed"
+	209 "Unsafe value assigned to variable"
+	210 "Invalid parameter passed to function"
+	211 "Error accessing external flash"
+	212 "Could not allocate memory"
+	213 "Realtime deadline missed"
+	214 "Measured a current that is out of bounds."
+	215 "Not enough current flowing, despite something being turned on."
+	216 "Could not get up to pressure during boot pressure test, possibly because no water"
+}
+
+
 array set ::de1_substate_types_reversed [reverse_array ::de1_substate_types]
 
 array set translation [encoding convertfrom utf-8 [read_binary_file "[homedir]/translation.tcl"]]
@@ -519,13 +620,13 @@ proc de1_substate_text {} {
 
 
 proc next_espresso_step {} {
-	msg "Tell DE1 to move to the next step in espresso making"
+	msg -NOTICE "Tell DE1 to move to the next step in espresso making"
 
 }
 
 
 proc start_refill_kit {} {
-	msg "Tell DE1 to start REFILL"
+	msg -NOTICE "Tell DE1 to start REFILL"
 	set ::de1(timer) 0
 	set ::de1(volume) 0
 
@@ -546,7 +647,7 @@ proc start_refill_kit {} {
 
 proc start_decaling {} {
 
-	msg "Tell DE1 to start DESCALING"
+	msg -NOTICE "Tell DE1 to start DESCALING"
 	set ::de1(timer) 0
 	set ::de1(volume) 0
 	de1_send_state "descale" $::de1_state(Descale)
@@ -561,7 +662,7 @@ proc start_decaling {} {
 
 proc start_air_purge {} {
 
-	msg "Tell DE1 to start TRAVEL DO"
+	msg -NOTICE "Tell DE1 to start TRAVEL DO"
 	set ::de1(timer) 0
 	set ::de1(volume) 0
 	de1_send_state "air purge" $::de1_state(AirPurge)
@@ -577,7 +678,7 @@ proc start_air_purge {} {
 
 proc start_cleaning {} {
 
-	msg "Tell DE1 to start CLEANING"
+	msg -NOTICE "Tell DE1 to start CLEANING"
 	set ::de1(timer) 0
 	set ::de1(volume) 0
 	de1_send_state "descale" $::de1_state(Clean)
@@ -591,7 +692,6 @@ proc start_cleaning {} {
 
 
 proc reset_gui_starting_hot_water_rinse {} {
-	#msg "Tell DE1 to start HOT WATER RINSE"
 	set ::de1(timer) 0
 	set ::de1(volume) 0
 }
@@ -604,11 +704,11 @@ proc start_hot_water_rinse {} {
 proc start_flush {} {
 
 	if {$::settings(go_idle_before_all_operations) == 1} {
-		msg "Tell DE1 to go idel before HOT WATER RINSE (flush)"
+		msg -NOTICE "Tell DE1 to go idel before HOT WATER RINSE (flush)"
 		de1_send_state "go idle" $::de1_state(Idle)
 	}
-	
-	msg "Tell DE1 to start flush"
+
+	msg -NOTICE "Tell DE1 to start flush"
 	de1_send_state "flush" $::de1_state(HotWaterRinse)
 
 
@@ -632,11 +732,11 @@ proc start_steam_rinse {} {
 	set ::de1(volume) 0
 
 	if {$::settings(go_idle_before_all_operations) == 1} {
-		msg "Tell DE1 to go idle before steam rinse"
+		msg -NOTICE "Tell DE1 to go idle before steam rinse"
 		de1_send_state "go idle" $::de1_state(Idle)
 	}
-	
-	msg "Tell DE1 to start STEAM RINSE"
+
+	msg -NOTICE "Tell DE1 to start STEAM RINSE"
 	de1_send_state "steam rinse" $::de1_state(SteamRinse)
 
 	#after 1000 read_de1_state
@@ -650,7 +750,7 @@ proc start_steam_rinse {} {
 
 proc reset_gui_starting_steam {} {
 
-	msg "reset_gui_starting_steam"
+	msg -INFO "reset_gui_starting_steam"
 
 	set ::de1(timer) 0
 	set ::de1(volume) 0
@@ -661,6 +761,7 @@ proc reset_gui_starting_steam {} {
 	steam_elapsed length 0
 	steam_pressure length 0
 	steam_flow length 0
+	steam_flow_goal length 0
 	steam_temperature length 0
 	#steam_pressure append 0
 	#steam_elapsed append 0
@@ -669,11 +770,11 @@ proc reset_gui_starting_steam {} {
 proc start_steam {} {
 
 	if {$::settings(go_idle_before_all_operations) == 1} {
-		msg "Tell DE1 to go idle before steam"
+		msg -NOTICE "Tell DE1 to go idle before steam"
 		de1_send_state "go idle" $::de1_state(Idle)
 	}
-	
-	msg "Tell DE1 to start making STEAM"
+
+	msg -NOTICE "Tell DE1 to start making STEAM"
 	de1_send_state "make steam" $::de1_state(Steam)
 
 	#after 1000 read_de1_state
@@ -698,8 +799,6 @@ proc start_steam {} {
 
 proc reset_gui_starting_espresso {} {
 
-	set ::previous_FrameNumber -1
-
 	set ::settings(history_saved) 0
 
 	set ::de1(timer) 0
@@ -708,41 +807,38 @@ proc reset_gui_starting_espresso {} {
 	set ::de1(preinfusion_volume) 0
 	set ::de1(pour_volume) 0
 	set ::de1(current_frame_number) 0
+	::de1::state::reset_framenumbers
 
 	# only works if a BLE scale is attached
-	set ::de1(final_espresso_weight) 0	
+	set ::de1(final_espresso_weight) 0
 
 	############
-	# clear any description of the previous espresso
-	set ::settings(scentone) ""
-	set ::settings(espresso_enjoyment) 0
-
 	# this sets the time the espresso starts, used for recording this espresso to a history file
 	set ::settings(espresso_clock) [clock seconds]
 
-	set ::settings(espresso_notes) ""
-	set ::settings(drink_tds) 0
-	set ::settings(drink_weight) 0
-	set ::settings(drink_ey) 0
+	# clear any description of the previous espresso
+#	set ::settings(scentone) ""
+#	set ::settings(espresso_enjoyment) 0	
+#	set ::settings(espresso_notes) ""
+#	set ::settings(drink_tds) 0
+#	set ::settings(drink_weight) 0
+#	set ::settings(drink_ey) 0
+	foreach field [metadata fields -domain shot -category description -propagate 0] {
+		set data_type [metadata get $field data_type]
+		if { $data_type eq "number" } {
+			set ::settings($field) 0
+		} else {
+			set ::settings($field) {}
+		}
+	}
+	
 	############
 
 
 	clear_espresso_chart
-	clear_espresso_timers
 
 	incr ::settings(espresso_count)
 	save_settings
-
-
-	#start_timers
-
-	if {$::de1(scale_device_handle) != 0} {
-		# this variable prevents the stop trigger from happening until the Tare has succeeded.
-		set ::de1(scale_autostop_triggered) 1
-		scale_tare
-		scale_timer_off
-	}
-
 
 	if {$::settings(stress_test) == 1} {
 		# this will cease to work once the GHC is installed
@@ -766,17 +862,17 @@ proc ghc_message {type} {
 proc start_espresso {} {
 
 	if {$::settings(start_espresso_only_if_scale_connected) == 1 && $::de1(scale_device_handle) == 0 && $::settings(scale_bluetooth_address) != ""} {
-		msg "Refusing to START espresso without the scale being connected"
+		msg -WARNING "Refusing to START espresso without the scale being connected"
 		info_page [translate "Please connect your scale"] [translate "Ok"]
 		return
 	}
 
 	if {$::settings(go_idle_before_all_operations) == 1} {
-		msg "Tell DE1 to go idle before espresso"
+		msg -NOTICE "Tell DE1 to go idle before espresso"
 		de1_send_state "go idle" $::de1_state(Idle)
 	}
-	
-	msg "Tell DE1 to start making ESPRESSO"
+
+	msg -NOTICE "Tell DE1 to start making ESPRESSO"
 	de1_send_state "make espresso" $::de1_state(Espresso)
 
 	#after 1000 read_de1_state
@@ -801,30 +897,43 @@ proc start_espresso {} {
 	return	
 }
 
+proc start_next_step {} {
+
+	if {$::de1_num_state($::de1(state)) != "Espresso"} {
+		msg -INFO "Not in espresso state, skipping moving on"
+		return
+	}
+
+
+	if {$::de1_substate_types($::de1(substate)) != "preinfusion" \
+	 && $::de1_substate_types($::de1(substate)) != "pouring" } {
+		msg -INFO "Espresso heating, skipping moving on"
+	}
+
+	msg -NOTICE "Tell DE1 to go to next frame"
+	de1_send_state "skip to next frame" $::de1_state(SkipToNext)
+
+	return	
+}
+
+
 proc reset_gui_starting_hotwater {} {
 	set ::de1(timer) 0
 	set ::de1(volume) 0
+	set ::de1(pour_volume) 0
 	incr ::settings(water_count)
 
-	if {$::de1(scale_device_handle) != 0} {
-		# this variable prevents the stop trigger from happening until the Tare has succeeded.
-		set ::de1(scale_autostop_triggered) 1
-		scale_tare
-		scale_timer_off
-	}
-	
 	save_settings
-
 }
 
 proc start_water {} {
 
 	if {$::settings(go_idle_before_all_operations) == 1} {
-		msg "Tell DE1 to go idle before hot water"
+		msg -NOTICE "Tell DE1 to go idle before hot water"
 		de1_send_state "go idle" $::de1_state(Idle)
 	}
-	
-	msg "Tell DE1 to start making HOT WATER"
+
+	msg -NOTICE "Tell DE1 to start making HOT WATER"
 	de1_send_state "make hot water" $::de1_state(HotWater)
 
 	#after 1000 read_de1_state
@@ -850,7 +959,8 @@ proc start_water {} {
 }
 
 proc start_idle {} {
-	msg "Tell DE1 to start to go IDLE (and stop whatever it is doing)"
+
+	msg -NOTICE "Tell DE1 to start to go IDLE (and stop whatever it is doing)"
 
 	# Ensure we are not locking the screen during use.
 	# This is only relevant when waking up the machine
@@ -888,7 +998,7 @@ proc start_idle {} {
 	#after 1000 read_de1_state
 	
 	if {$::de1(scale_device_handle) != 0} {
-		#scale_enable_lcd
+		scale_enable_lcd
 	}
 
 	if {$::android == 0} {
@@ -900,16 +1010,44 @@ proc start_idle {} {
 	if {$::de1(scale_device_handle) == 0 && $::settings(scale_bluetooth_address) != "" && [ifexists ::currently_connecting_de1_handle] == 0} {
 		#ble_connect_to_scale
 	}
-
-	#msg "sensors: [borg sensor list]"
 }
+
+proc start_schedIdle {} {
+	msg -NOTICE "Tell DE1 to start to go IDLE from a scheduler call"
+
+	# Ensure we are not locking the screen during use.
+	# This is only relevant when waking up the machine
+	if  {[sdltk screensaver] == 1} {
+		sdltk screensaver off
+	}
+
+	if {$::de1(device_handle) == 0} {
+		start_idle
+	}
+
+	set idlecmd $::de1_state(Idle)
+	catch {
+		if {$::settings(firmware_version_number) >= 1293} {
+			# new firmware scheduled-wake command was only working as of v1293 firmware
+			set idlecmd $::de1_state(SchedIdle)
+		}
+	}
+
+	de1_send_state "go idle" $idlecmd
+
+	
+	if {$::de1(scale_device_handle) != 0} {
+		scale_enable_lcd
+	}
+}
+
+
 
 
 proc start_sleep {} {
 
 	# obsolete, now done in fw
 	#if {$::settings(refill_check_at_sleep) == 1} {
-	#	msg "check refill first before sleep"
 	#	set ::sleep_after_refill 1
 	#	start_refill_kit
 	#	return
@@ -923,13 +1061,13 @@ proc start_sleep {} {
 
 
     if {[ifexists ::app_updating] == 1} {
-		msg "delaying screen saver because tablet app is updating"
+		msg -DEBUG "delaying screen saver because tablet app is updating"
 		delay_screen_saver
 		return
 	}
 
     if {$::de1(currently_updating_firmware) == 1 || [ifexists ::de1(in_fw_update_mode)] == 1} {
-		msg "delaying screen saver because firmware is updating"
+		msg -DEBUG "delaying screen saver because firmware is updating"
 		delay_screen_saver
 		return
 	}
@@ -939,11 +1077,15 @@ proc start_sleep {} {
 
 	#de1_cause_refill_now_if_level_low
 
-	msg "Tell DE1 to start to go to SLEEP (only send when idle)"
+	msg -NOTICE "Tell DE1 to start to go to SLEEP (only send when idle)"
 	de1_send_state "go to sleep" $::de1_state(Sleep)
 
 	if {$::de1(scale_device_handle) != 0} {
-		#scale_disable_lcd
+
+		# of on usb power, then turn off the LCD when the tablet goes to sleep
+		if {[ifexists ::de1(scale_usb_powered)] == 1} {
+			scale_disable_lcd
+		}
 	}
 
 	
@@ -960,13 +1102,13 @@ proc start_sleep {} {
 
 proc check_if_steam_clogged {} {
 
-msg "check_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_clogged"
-
 	if {[steam_pressure length] < 30} {
 		# if steaming was for less than 3 seconds, then don't run this test, as that was just a short purge
-		msg "Not checking steam for clogging because steam_pressure length : [steam_pressure length] < 30"
+		msg -DEBUG "Not checking steam for clogging because steam_pressure length : [steam_pressure length] < 30"
 		return 
 	}
+
+	#msg -DEBUG "check_if_steam_clogged"	
 
 	if {$::settings(enable_descale_steam_check) != 1} {
 		return
@@ -977,7 +1119,8 @@ msg "check_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_
 		# change temp threshold for clogging to a Fahrenheit number, as steam temp logging is in their temp system
 		set ::settings(steam_over_temp_threshold) [celsius_to_fahrenheit 180]
 	}
-	set ::settings(steam_over_pressure_threshold) 5
+	
+	set ::settings(steam_over_pressure_threshold) 8
 
 	set bad_pressure 0
 	set bad_temp 0
@@ -993,7 +1136,7 @@ msg "check_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_
 			set bad_pressure 1
 		}
 
-		msg "over_pressure: [llength $over_pressure] vs $::settings(steam_over_pressure_count_trigger) - over_pressure: $over_pressure - bad_pressure: $bad_pressure ($::settings(steam_over_pressure_threshold) bar)"
+		msg -WARNING "check_if_steam_clogged: over_pressure: [llength $over_pressure] vs $::settings(steam_over_pressure_count_trigger) - over_pressure: $over_pressure - bad_pressure: $bad_pressure ($::settings(steam_over_pressure_threshold) bar)"
 
 	}
 
@@ -1004,15 +1147,20 @@ msg "check_if_steam_cloggedcheck_if_steam_cloggedcheck_if_steam_cloggedcheck_if_
 			set bad_temp 1
 		}
 
-		msg "over_temp: $over_temp -  $bad_temp (> $::settings(steam_over_temp_threshold)º)"
+		msg -WARNING "check_if_steam_clogged: over_temp: $over_temp -  $bad_temp (> $::settings(steam_over_temp_threshold)º)"
 
 	}
 
-	if {$bad_pressure == 1 || $bad_temp == 1} {
+	if {$bad_pressure == 1} {
 		set_next_page off descalewarning;
 		page_show descalewarning
 
+	} elseif {$bad_temp == 1} {
+		info_page [subst {[translate "Your steam is getting too hot."] [translate "Increase your steam flow rate or lower the steam temperature in the calibration settings."]}] [translate Ok] steam_3
+	} else {
+		#msg -DEBUG "check_if_steam_clogged found no problem"	
 	}
+
 }
 
 proc has_flowmeter {} {
@@ -1020,3 +1168,7 @@ proc has_flowmeter {} {
 }
 
 
+
+###
+### ::de1 namespace NOT included here (linear inclusion expected by existing code)
+###

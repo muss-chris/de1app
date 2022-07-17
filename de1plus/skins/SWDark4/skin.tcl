@@ -153,7 +153,7 @@ add_de1_page "preheat_4" "home.png"
 set_de1_screen_saver_directory "[skin_directory]/screen_saver"
 
 # include the generic settings features for all DE1 skins.  
-source "[homedir]/skins/default/de1_skin_settings.tcl"
+#source "[homedir]/skins/default/de1_skin_settings.tcl"
 
 # the standard behavior when the DE1 is doing something is for tapping anywhere on the screen to stop that. This "source" command does that.
 #source "[homedir]/skins/default/standard_stop_buttons.tcl"
@@ -296,11 +296,6 @@ add_de1_variable "home swsettings off espresso_1 espresso_3 preheat_1 preheat_3 
 # espresso charts
 
 set charts_width 1700
-if {$::debugging == 1} {
-	set charts_width 400
-	add_de1_variable "home off espresso espresso_3" 450 220 -text "" -font Helv_6 -fill "#8b8b8b" -anchor "nw" -justify left -width [rescale_y_skin 1560] -textvariable {$::debuglog}
-	add_de1_variable "steam steam_1 steam_3 preheat_1 preheat_2 preheat_3 preheat_4 water water_1 water_3" 50 220 -text "" -font Helv_6 -fill "#8b8b8b" -anchor "nw" -justify left -width [rescale_y_skin 1560] -textvariable {$::debuglog}
-}
 
 	
 	# not yet ready to be used, still needs some work
@@ -1108,7 +1103,7 @@ add_de1_variable "preheat_2 preheat_4 hotwaterrinse" $column1_pos [expr {$pos_to
 		
 		add_de1_variable "off off_zoomed espresso_3 espresso_3_zoomed off_zoomed_temperature espresso_3_zoomed_temperature" $column1_pos [expr {$pos_top + (9.25 * $spacer)}] -justify left -anchor "nw" -font Helv_7 -fill $::detailtextcol -width [rescale_x_skin 520] -textvariable {[round_to_one_digits $::swdark_settings(swcoffeedose)][translate "g @ 1:"][round_to_one_digits $::swdark_settings(swbrewratio)][translate " to "][round_to_integer [update_swcoffeeweight]][translate "g"]}
 		
-		add_de1_variable "off off_zoomed espresso_3 espresso_3_zoomed off_zoomed_temperature espresso_3_zoomed_temperature" $column1_pos [expr {$pos_top + (10.25 * $spacer)}] -justify left -anchor "nw" -text "" -font Helv_7 -fill $::detailtextcol -width [rescale_x_skin 520] -textvariable {[finalwaterweight_text]} 
+		add_de1_variable "off off_zoomed espresso_3 espresso_3_zoomed off_zoomed_temperature espresso_3_zoomed_temperature" $column1_pos [expr {$pos_top + (10.25 * $spacer)}] -justify left -anchor "nw" -text "" -font Helv_7 -fill $::detailtextcol -width [rescale_x_skin 520] -textvariable {[drink_weight_text]} 
 		
 		add_de1_text "espresso espresso_zoomed espresso_zoomed_temperature" $column1_pos [expr {$pos_top + (14.5 * $spacer)}] -justify left -anchor "nw" -text [translate "Recipe"] -font Helv_7_bold -fill #ffffff -width [rescale_x_skin 520]
 		

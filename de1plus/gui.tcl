@@ -1,5 +1,15 @@
-package provide de1_gui 1.0
+package provide de1_gui 1.3
+
+package require de1_de1 1.1
+package require de1_event 1.0
+package require de1_logging 1.1
 package require de1_plugins 1.0
+package require de1_dui 1.0
+package require de1_history_viewer 1.1
+
+###
+### ::gui namespace defined after globals
+###
 
 proc load_skin {} {
 
@@ -12,7 +22,8 @@ proc load_skin {} {
 
 	if {[catch {
 		source "[skin_directory]/skin.tcl"
-	} err] != 0} {
+	} err opts_dict ] != 0} {
+		::logging::log_error_result_opts_dict $err $opts_dict
 		catch {
 			# reset the skin back to default, if their skin failed to load correctly
 			# but don't do so if ::debugging flag is enabled
@@ -21,13 +32,48 @@ proc load_skin {} {
 			}
 		}
 		catch {
-			message_page [subst {[translate "Your choice of skin had an error and cannot be used."]\n\n$err}] [translate "Ok"]
+			message_page [subst {[translate "Your choice of skin had an error and cannot be used."]}] [translate "Ok"] [strip_crlf $err]
 		}
-		msg "Failed to 'load_skin' because: '$err'"
+		msg -ERROR "Failed to 'load_skin' because: '$err'"
 		after 10000 exit
 	}
 
 }
+
+proc strip_crlf {in} {
+	regsub -all {\r|\n} $in {} out
+	return $out
+}
+
+proc page_change_due_to_de1_state_change {textstate} {
+	if {$textstate == "Idle"} {
+		page_display_change $::de1(current_context) "off"
+	} elseif {$textstate == "GoingToSleep"} {
+		page_display_change $::de1(current_context) "sleep" 
+	} elseif {$textstate == "Sleep"} {
+		page_display_change $::de1(current_context) "saver" 
+	} elseif {$textstate == "Steam"} {
+		page_display_change $::de1(current_context) "steam" 
+	} elseif {$textstate == "Espresso"} {
+		page_display_change $::de1(current_context) "espresso" 
+	} elseif {$textstate == "HotWater"} {
+		page_display_change $::de1(current_context) "water" 
+	} elseif {$textstate == "Refill"} {
+		page_display_change $::de1(current_context) "tankempty" 
+	} elseif {$textstate == "SteamRinse"} {
+		page_display_change $::de1(current_context) "steamrinse" 
+	} elseif {$textstate == "HotWaterRinse"} {
+		page_display_change $::de1(current_context) "hotwaterrinse" 
+	} elseif {$textstate == "Descale"} {
+		page_display_change $::de1(current_context) "descaling" 
+	} elseif {$textstate == "Clean"} {
+		page_display_change $::de1(current_context) "cleaning" 
+	} elseif {$textstate == "AirPurge"} {
+		page_display_change $::de1(current_context) "travel_do" 
+	}
+}
+
+
 
 proc setup_images_for_other_pages {} {
 	borg spinner on
@@ -66,7 +112,7 @@ proc photoscale {img sx {sy ""} } {
 }
 
 proc photoscale_not_android {img sx {sy ""} } {
-	msg "photoscale $img $sx $sy"
+	msg -DEBUG "photoscale $img $sx $sy"
     if { $sx == 1 && ($sy eq "" || $sy == 1) } {
         return;   # Nothing to do!
     }
@@ -78,7 +124,15 @@ proc photoscale_not_android {img sx {sy ""} } {
         foreach {sy_m sy_f} [Double2Fraction $sy] break
     }
     set tmp [image create photo]
-    $tmp copy $img -zoom $sx_m $sy_m -compositingrule set
+
+	if {[catch {
+	    catch {$tmp copy $img -zoom $sx_m $sy_m -compositingrule set} 
+	} err] != 0} {
+		# note that not all resolution resizes will work. Some take more memory than is available, 
+		# especially if the resolution change is a long float, and not an even number (ie, 2560->2559)
+		msg -ERROR "photoscale_not_android failed because: '$err'"
+	}
+
     $img blank
     $img copy $tmp -shrink -subsample $sx_f $sy_f -compositingrule set
     image delete $tmp
@@ -86,7 +140,7 @@ proc photoscale_not_android {img sx {sy ""} } {
 
 
 proc photoscale_android {img sx {sy ""} } {
-	msg "photoscale $img $sx $sy"
+	msg -DEBUG "photoscale $img $sx $sy"
     if { $sx == 1 && ($sy eq "" || $sy == 1) } {
         return;   # Nothing to do!
     }
@@ -108,73 +162,11 @@ proc photoscale_android {img sx {sy ""} } {
 }
 
 proc add_de1_page {names filename {skin ""} } {
-
-	set ::settings(preload_all_page_images) 0
-
-	if {$skin == ""} {
-		set skin $::settings(skin)
-	}
-
-	set pngfilename "[homedir]/skins/$skin/${::screen_size_width}x${::screen_size_height}/$filename"
-	set srcfilename "[homedir]/skins/$skin/2560x1600/$filename"
-
-	set make_new_image 0
-	if {$::screen_size_width == 1280 && $::screen_size_height == 800} {
-		# no redoing, as these are shipping with the app
-	} elseif {$::screen_size_width == 2560 && $::screen_size_height == 1600} {
-		# no redoing, as these are shipping with the app
-	} elseif {[file exists $pngfilename] != 1} {
-		set make_new_image 1
-		msg "Making new image because destination image does not exist: $pngfilename"
-	} elseif {[file mtime $srcfilename] > [file mtime $pngfilename]} {
-		# if the source image is newer than the target image, 
-		set make_new_image 1
-		msg "Making new image because date of src image is newer: $srcfilename"
-	}
-
-	if {$make_new_image == 1} {
-        borg toast [subst {[translate "Resizing image"]\n\n[file tail $filename]}]
-		borg spinner on
-    	catch {
-    		file mkdir "[homedir]/skins/$skin/${::screen_size_width}x${::screen_size_height}/"
-    	}
-
-
-        set rescale_images_x_ratio [expr {$::screen_size_height / 1600.0}]
-        set rescale_images_y_ratio [expr {$::screen_size_width / 2560.0}]
-
-		#msg "photoscale $names $::rescale_images_x_ratio $::rescale_images_y_ratio"
-		image create photo $names -file $srcfilename
-		photoscale $names $rescale_images_y_ratio $rescale_images_x_ratio
-		borg spinner off
-		$names write $pngfilename  -format {jpeg -quality 90}
-		image delete $names
-
-	} else {
-		if {$::settings(preload_all_page_images) == 1} {
-			set iname [image create photo $names -file $pngfilename]
-			msg "loading page: '$names' with image '$pngfilename' with tclname: '$iname'"
-			#image create photo $names 			$names -file $pngfilename
-		}
-	}
-
-	#.can create image {0 0} -anchor nw -image $names -tag [list pages $name] -state hidden 
-	foreach name $names {
-		.can create image {0 0} -anchor nw  -tag [list pages $name] -state hidden 
-		if {$::settings(preload_all_page_images) == 1} {
-			#.can itemconfigure $names -image $names 
-			.can itemconfigure $name -image $names
-		} else {
-			set ::delayed_image_load($name) $pngfilename
-		}
-	}
-
-	#set ::image_to_page($pngfilename) $names
+	dui page add $names -bg_img $filename
+	
 }	
 
 proc set_de1_screen_saver_directory {{dirname {}}} {
-
-	msg "set_de1_screen_saver_directory"
 
 	# force use of our default saver directory if the black screen saver is enabled, otherwise use whatever the skin chooses
 	if {$::settings(screen_saver_change_interval) == 0} {
@@ -187,9 +179,10 @@ proc set_de1_screen_saver_directory {{dirname {}}} {
 		set saver_directory $dirname
 	}
 
+	msg -INFO "set_de1_screen_saver_directory: $::saver_directory"
+
 	#set pngfilename [random_saver_file]
 	set names "saver"
-	#puts $pngfilename
 	#image create photo $names -file $pngfilename
 	image create photo $names 
 
@@ -264,7 +257,6 @@ proc vertical_slider {varname minval maxval x y x0 y0 x1 y1} {
 	}
 
 	#set $var $finalvalue
-	#msg "vertical slider $x $y $x0 $y0  $x1 $y1 = $range = $finalvalue = $varname"
 
 	eval set $varname $finalvalue
 
@@ -273,41 +265,18 @@ proc vertical_slider {varname minval maxval x y x0 y0 x1 y1} {
 # on android we track finger-down, instead of button-press, as it gives us lower latency by avoding having to distinguish a potential gesture from a tap
 # finger down gives a http://blog.tcl.tk/39474
 proc translate_coordinates_finger_down_x { x } {
-
-	if {$::android == 1} {
-	 	return [expr {$x * [winfo screenwidth .] / 10000}]
-	 }
-	 return $x
+	return [dui::platform::translate_coordinates_finger_down_x $x]
 }
 proc translate_coordinates_finger_down_y { y } {
-
-	if {$::android == 1} {
-	 	return [expr {$y * [winfo screenheight .] / 10000}]
-	 }
-	 return $y
+	return [dui platform translate_coordinates_finger_down_y $y ]	
 }
 
 proc is_fast_double_tap { key } {
-	# if this is a fast double-tap, then treat it like a long tap (button-3) 
-
-	set b 0
-	set millinow [clock milliseconds]
-	set prevtime [ifexists ::last_click_time($key)]
-	if {$prevtime != ""} {
-		# check for a fast double-varName
-		if {[expr {$millinow - $prevtime}] < 150} {
-			msg "Fast button double-tap on $key"
-			set b 1
-		}
-	}
-	set ::last_click_time($key) $millinow
-
-	return $b
+	return [dui platform is_fast_double_tap $key]
 }
 
 proc vertical_clicker {bigincrement smallincrement varname minval maxval x y x0 y0 x1 y1 {b 0} } {
 	# b = which button was tapped
-	#msg "Var: $varname : Button $b  $x $y $x0 $y0 $x1 $y1 "
 
 	set x [translate_coordinates_finger_down_x $x]
 	set y [translate_coordinates_finger_down_y $y]
@@ -383,14 +352,12 @@ proc ifexists {fieldname2 {defvalue {}} } {
     		return ""
     	}
     }
-    #return $defvalue
 }
 
 proc set_dose_goal_weight {weight} {
 	global current_weight_setting
 	set current_weight_setting $weight
 	.can itemconfig .current_setting_grams_label -text [round_one_digits $weight]
-	#update
 }
 
 
@@ -402,7 +369,7 @@ proc round_one_digits {amount} {
 
 
 proc canvas'textvar {canvas tag _var args} {
-	puts "UNUSED CURRENTLY"
+	msg -WARNING "Unexpected use of canvas'textvar"
     upvar 1 $_var var
     if { [llength $args] } {
         $canvas itemconfig $tag -text $var
@@ -415,10 +382,10 @@ proc canvas'textvar {canvas tag _var args} {
 # optional "alsobind" allows us to put text on top of a pressable button and have the text also bound to the same down/up/leave actions
 proc up_down_button_create {actionscript btn_images img_loc key_loc buttontype {alsobind {}} } {
 
-	msg "up_down_button_create"
+	msg -DEBUG "up_down_button_create"
 
 	if {$buttontype != "onetime" && $buttontype != "holdrepeats"} {
-		puts "ERROR unknown buttontype $buttontype"
+		msg -ERROR "unknown buttontype $buttontype"
 		return
 	}
 
@@ -449,7 +416,6 @@ proc up_down_button_create {actionscript btn_images img_loc key_loc buttontype {
 		.can bind $tobind <Leave> [list generic_push_button_settings $up_png $down_png $actionscript leave $buttontype]
 		lappend image_tags_created $up_png $down_png
 	}
-
 	return 
 } 
 
@@ -475,13 +441,11 @@ proc generic_push_button_settings {btnup btndown action change buttontype} {
 			if {[ifexists genericstate($btnup)] != ""} {
 				# cancel the held-button timer when they 
 				after cancel $genericstate($btnup)
-				#puts "cancelling held timer $genericstate($btnup) for $btnup"
 			}
 		}
 
 		if {$change == "leave"} {
 			if {[ifexists genericstate($btndown)] != "down"} {
-				#puts "skipping leave event because they never pressed the button down"
 				return
 			}
 
@@ -490,27 +454,23 @@ proc generic_push_button_settings {btnup btndown action change buttontype} {
 			update
 			set genericstate($btndown) "up"
 			set genericstate($btnup) ""
-			#puts "leave button $btnup"
 		} elseif {$change == "up"} {
 			# this is the up button event
 			if {$genericstate($btndown) == "up"} {
-				#puts "skipping up event because already left the button"
 				return
 			}
 
-			#puts "- $btnup : $genericstate($btndown) - $genericstate($btnup) "
 
 			.can itemconfigure $btnup -state normal
 			.can itemconfigure $btndown -state hidden
 			update
 			set genericstate($btnup) ""
-			#puts "evaling action with previous state $genericstate($btndown)"
 			if {$genericstate($btndown) != "held"} {
 				eval $action
 			}
 			set genericstate($btndown) "up"
 		} else {
-			puts "unknown action $change"
+			msg -ERROR "unknown action $change"
 		}
 	}
 }
@@ -521,32 +481,20 @@ proc generic_button_held {btnup btndown action} {
 	# button has been pressed down for a while, so activate a down/up press
 	if {$genericstate($btndown) == "held" || $genericstate($btndown) == "down"} {
 		set genericstate($btndown) "held"		
-		#puts "button $btnup held evaling function now"
 		eval $action
 		update
-		#generic_push_button_settings $btnup $btndown $action "up"
-		#update
-
-		#generic_push_button_settings $btnup $btndown $action "down"
-		#update
 		after 150 [list generic_button_held $btnup $btndown $action]
 
 	} elseif {$genericstate($btndown) == "up"} {
 		#no longer held
 	} else {
-		puts "unknown held state: '$genericstate($btndown)'"
+		msg -ERROR "unknown held state: '$genericstate($btndown)'"
 	}
 }
 
 
 proc appdir {} {
-	#return [file dirname [DirectPathname [info script]]]
 	return [file dirname [DirectPathname .]]
-	
-	#return [file dirname [info script]]
-	#return [file dirname [file join [pwd] $pathname]]
-	# this old version would give us "." if run from current directory, which wasn't helpful always for Android, which wants an absolute path
-    
 }
 
 # copied from https://wiki.tcl-lang.org/page/Making+a+Path+Absolute
@@ -578,8 +526,8 @@ proc install_update_app_icon {} {
 
 	set appurl "file://[appdir]/appupdate.tcl"
 	catch {
-		set x [borg shortcut add "Decent Update" $appurl $iconbase64_de1]
-		puts "shortcut added: '$x'"
+		set x [borg shortcut add "Update Decent" $appurl $iconbase64_de1]
+		msg -NOTICE "shortcut added: '$x'"
 	}
 
 }
@@ -595,188 +543,67 @@ proc install_de1_app_icon {} {
 	set iconbase64_de1 [::base64::encode -maxlen 0 $icondata_de1]
 
 	set appurl "file://[appdir]/de1.tcl"
-	puts "appurl: $appurl"
+	msg -DEBUG "appurl: $appurl"
 	catch {
 		set x [borg shortcut add "DE1" $appurl $iconbase64_de1]
-		puts "shortcut added: '$x'"
+		msg -NOTICE "shortcut added: '$x'"
 	}
-
-	#install_update_app_icon [appdir]
-
 }
 
 
 proc install_de1plus_app_icon {} {
 	package require base64
-	puts "icon file: '[appdir]/de1plus_icon_v2.png'"
+	msg -DEBUG "icon file: '[appdir]/de1plus_icon_v2.png'"
 	set icondata_de1plus [read_binary_file "[appdir]/de1plus_icon_v2.png"]
 	set iconbase64_de1plus [::base64::encode -maxlen 0 $icondata_de1plus]
 
 	set appurl "file://[appdir]/de1plus.tcl"
-	#puts "appurl: $appurl"
 	#catch {
 		set x [borg shortcut add "Decent" $appurl $iconbase64_de1plus]
-		puts "shortcut added: '$x'"
+		msg -NOTICE "shortcut added: '$x'"
 	#}
-
-	#install_update_app_icon [appdir]
 }
 
 proc platform_button_press {} {
-	global android 
-	global undroid
-	#return {<Motion>}
-	if {$android == 1} {
-		return {<<FingerDown>>}
-		#return {<ButtonPress-1>}
-	}
-	#return {<Motion>}
+	return [dui platform button_press]
+}
+
+proc platform_button_native_press {} {
 	return {<ButtonPress-1>}
 }
 
+
 proc platform_button_long_press {} {
-	global android 
-	if {$android == 1} {
-		#return {<<FingerUp>>}
-		return {<ButtonPress-3>}
-	}
-	return {<ButtonPress-3>}
+	return [dui platform button_long_press]
 }
 
 proc platform_finger_down {} {
-	global android 
-	if {$android == 1} {
-		return {<<FingerDown>>}
-	}
-	return {<ButtonPress-1>}
+	return [dui platform finger_down]
 }
 
 proc platform_button_unpress {} {
-	global android 
-	if {$android == 1} {
-		return {<<FingerUp>>}
-	}
-	return {<ButtonRelease-1>}
+	return [dui platform button_unpress]
 }
-
-
-set cnt 0
-set debugcnt 0
-set ::debuglog {}	
-# display a debug message into the on-screen debug window, if that's enabled
-# also saves the info to the log file.				
-proc msg {text} {
-
-	if {$text == ""} {
-		return
-	}
-
-	catch {
-		log_to_debug_file $text
-	}
-
-	if {[ifexists ::debugging] != 1} {
-		# don't keep a rolling window of debug msgs if it's not going to be displayed onscreen
-		return
-	}
-
-	incr ::debugcnt
-
-	# someone inefficent mechanism, but no better way to prepend a string exists https://stackoverflow.com/questions/10009181/tcl-string-prepend
-	set ::debuglog "$::debugcnt) $text\n$::debuglog"
-
-	set loglines [split $::debuglog "\n"]
-
-	while {[llength $loglines] > $::settings(debuglog_window_size)} {
-		unshift loglines
-		set ::debuglog [join $loglines \n]
-	}
-
-}
-
 
 
 proc add_variable_item_to_context {context label_name varcmd} {
-	#puts "varcmd: '$varcmd'"
-	global variable_labels
-	#if {[info exists variable_labels($context)] != 1} {
-	#	set variable_labels($context) [list $label_name $varcmd]
-	#} else {
-		lappend variable_labels($context) [list $label_name $varcmd]
-	#}
+	msg -WARNING "add_variable_item_to_context is DEPRECATED, please use 'dui page add_variable' instead"
+	# This may or may not work as dui::page::add_variable takes canvas IDs instead of labels.
+	dui::page::add_variable $context $label_name $varcmd
 }
 
 
 proc add_visual_item_to_context {context label_name} {
-	global existing_labels
-	set existing_text_labels [ifexists existing_labels($context)]
-	lappend existing_text_labels $label_name
-	set existing_labels($context) $existing_text_labels
+	dui page add_items $context $label_name
 }
 
-set button_cnt 0
+#set button_cnt 0
 proc add_de1_action {context tclcmd} {
-	global actions
-	if {[info exists actions(context)] == 1} {
-		lappend actions($context) $tclcmd
-	} else {
-		set actions($context) $tclcmd
-	}
+	dui page add_action $context show $tclcmd
 }
 
 proc add_de1_button {displaycontexts tclcode x0 y0 x1 y1 {options {}}} {
-	global button_cnt
-
-	incr button_cnt
-	set btn_name ".btn_$button_cnt"
-	#set btn_name $bname
-	global skindebug
-	set width 0
-	if {[info exists skindebug] == 1} {
-		if {$skindebug == 1} {
-			set width 1
-		}
-	}
-	set rx0 [rescale_x_skin $x0]
-	set rx1 [rescale_x_skin $x1]
-	set ry0 [rescale_y_skin $y0]
-	set ry1 [rescale_y_skin $y1]
-	.can create rect $rx0 $ry0 $rx1 $ry1 -fill {} -outline black -width 0 -tag $btn_name -state hidden
-	if {[info exists skindebug] == 1} {
-		if {$skindebug == 1} {
-			.can create rect $rx0 $ry0 $rx1 $ry1 -fill {} -outline black -width 1 -tag ${btn_name}_lines -state hidden 
-			#add_visual_item_to_context $displaycontext ${btn_name}_lines
-		}
-	}
-
-	#puts "binding $btn_name to switch to new context: '$newcontext'"
-
-	#set tclcode [list page_display_change $displaycontext $newcontext]
-
-	regsub {%x0} $tclcode $rx0 tclcode
-	regsub {%x1} $tclcode $rx1 tclcode
-	regsub {%y0} $tclcode $ry0 tclcode
-	regsub {%y1} $tclcode $ry1 tclcode
-
-	.can bind $btn_name [platform_button_press] $tclcode
-	
-#	if {$::settings(disable_long_press) != 1 } {
-#		.can bind $btn_name [platform_button_long_press] $tclcode
-#	}
-
-#	if {[string first mousemove $options] != -1} {
-		#puts "mousemove detected"
-#		.can bind $btn_name [platform_finger_down] $tclcode
-#	}
-
-	foreach displaycontext $displaycontexts {
-		add_visual_item_to_context $displaycontext $btn_name
-		if {[ifexists skindebug] == 1} {
-			add_visual_item_to_context $displaycontext ${btn_name}_lines
-		}
-
-	}
-	return $btn_name
+	return [dui add dbutton $displaycontexts $x0 $y0 $x1 $y1 -command $tclcode -theme none]
 }
 
 # truncates strings that are too long to display and add a ...message on the end.
@@ -788,137 +615,64 @@ proc maxstring {in maxlength {optmsg {}} } {
 	return $in
 }
 
-set text_cnt 0
-proc add_de1_text {args} {
-	global text_cnt
-	incr text_cnt
-	set contexts [lindex $args 0]
-	set label_name "text_$text_cnt"
-	# keep track of what labels are displayed in what contexts
-	set x [rescale_x_skin [lindex $args 1]]
-	set y [rescale_y_skin [lindex $args 2]]
-	set torun [concat [list .can create text] $x $y [lrange $args 3 end] -tag $label_name -state hidden]
-	eval $torun
+# truncates strings that are too long to display and add a ...message on the end.
+# this version counts paragraph breaks as having "crlfequiv" equivalent characters
+proc maxstring_with_crlf_count {in maxlength crlfequiv {optmsg {}} } {
 
-	foreach context $contexts {
-		add_visual_item_to_context $context $label_name
+	set crlfs [regexp -all {\n\n} [string range $in 0 $maxlength]]
+	set thislen [expr {[string length $in] + ($crlfs * $crlfequiv)}]
+	if {$thislen > $maxlength} {
+		return "[string range $in 0 [expr {$maxlength - ($crlfs * $crlfequiv)}]]...$optmsg"
 	}
-	return $label_name
+
+	return $in
 }
 
-set image_cnt 0
+#set text_cnt 0
+proc add_de1_text {args} {
+	return [dui add dtext [lindex $args 0] [lindex $args 1] [lindex $args 2] -compatibility_mode 1 {*}[lrange $args 3 end]]
+}
+
+#set image_cnt 0
 proc add_de1_image {args} {
-
-	msg "add_de1_image $args"
-	global image_cnt
-	incr image_cnt
-	set contexts [lindex $args 0]
-	set label_name "image_$image_cnt"
-	# keep track of what labels are displayed in what contexts
-	set x [rescale_x_skin [lindex $args 1]]
-	set y [rescale_y_skin [lindex $args 2]]
-	set fn [lindex $args 3]
-
-	image create photo $label_name -file $fn
-	.can create image [list $x $y] -anchor nw -image $label_name -tag $label_name -state hidden 
-
-	foreach context $contexts {
-		add_visual_item_to_context $context $label_name
-	}
-
-	return $label_name
+	return [dui add image [lindex $args 0] [lindex $args 1] [lindex $args 2] [lindex $args 3] -theme none]
 }
 
 
 # derivced from sample code at http://wiki.tcl.tk/17067
-set widget_cnt 0
+#set widget_cnt 0
 proc add_de1_widget {args} {
-	global widget_cnt
-	set contexts [lindex $args 0]
-
-	incr widget_cnt
-	set widgettype [lindex $args 1]
-
-	set widget ".can.w_${widgettype}_$widget_cnt"
-
-	set errcode 0
-	set torun [concat [list $widgettype $widget] [lrange $args 5 end] ]
-	#msg $torun
-	#set errcode [catch { 
-		eval $torun
-	#} err]
-
-	if {$errcode == 1} {
-		puts $err
-		puts "while running" 
-		puts $torun
-	}
-
-	# BLT on android has non standard defaults, so we overrride them here, sending them back to documented defaults
-	if {$widgettype == "graph" && ($::android == 1 || $::undroid == 1)} {
-		$widget grid configure -dashes "" -color #DDDDDD -hide 0 -minor 1 
-		$widget configure -borderwidth 0
-		#$widget grid configure -hide 0
-	}
-
-	# the 4th parameter gives additional code to run when creating this widget, such as chart configuration instructions
-	set errcode [catch { 
-		eval [lindex $args 4]
-	} err]
-
-	if {$errcode == 1} {
-		puts $err
-		puts "while running" 
-		puts [lindex $args 4]
-	}
-	#.can create window [lindex $args 2] [lindex $args 3] -window $widget  -anchor nw -tag $widget -state normal
-	#set windowname [.can create window  [lindex $args 2] [lindex $args 3] -window $widget  -anchor nw -tag $widget -state hidden]
-	set x [rescale_x_skin [lindex $args 2]]
-	set y [rescale_y_skin [lindex $args 3]]
-
-	if {$widgettype == "scrollbar"} {
-		set windowname [.can create window  $x $y -window $widget  -anchor nw -tag $widget -state hidden -height 245]
-	} else {
-		set windowname [.can create window  $x $y -window $widget  -anchor nw -tag $widget -state hidden]
-	}
-	#puts "winfo: [winfo children .can]"
-	#.can bind $windowname [platform_button_press] "msg click"
-	
-
-		
-	set ::tclwindows($widget) [lrange $args 2 3]
-
-	foreach context $contexts {
-		#puts "add_visual_item_to_context $context '$widget'"
-		add_visual_item_to_context $context $widget
-	}
-	return $widget 
+	return [dui add widget [lindex $args 1] [lindex $args 0] [lindex $args 2] [lindex $args 3] -tclcode [lindex $args 4] \
+		-theme none {*}[lrange $args 5 end]]
 }
 
 
 proc add_de1_variable {args} {
-
 	set varcmd [lindex [unshift args] 0]
 	set lastcmd [unshift args]
 	if {$lastcmd != "-textvariable"} {
-		puts "WARNING: last -command needs to be -textvariable on a add_de1_variable line. You entered: '$lastcmd'"
+		msg -WARN add_de1_variable "last -command needs to be -textvariable on a add_de1_variable line. You entered: '$lastcmd'"
 		return
 	}
-	set contexts [lindex $args 0]
-	set label_name [eval add_de1_text $args]
-
-	# john 24-1-20 now unneeded code https://3.basecamp.com/3671212/buckets/7351439/messages/2360038011
-	#set x [rescale_x_skin [lindex $args 1]]
-	#set y [rescale_y_skin [lindex $args 2]]
-	#set torun [concat [list .can create text] $x $y [lrange $args 3 end] -tag $label_name -state hidden]
-	#eval $torun
-	#incr ::text_cnt
-
-	foreach context $contexts {
-		# keep track of what labels are displayed in what contexts
-		add_variable_item_to_context $context $label_name $varcmd
-	}
-	return $label_name
+	
+	return [dui add variable [lindex $args 0] [lindex $args 1] [lindex $args 2] -compatibility_mode 1 \
+		-textvariable $varcmd {*}[lrange $args 3 end]]
+	
+#	set contexts [lindex $args 0]
+#	set label_name [eval add_de1_text $args]
+#
+#	# john 24-1-20 now unneeded code https://3.basecamp.com/3671212/buckets/7351439/messages/2360038011
+#	#set x [rescale_x_skin [lindex $args 1]]
+#	#set y [rescale_y_skin [lindex $args 2]]
+#	#set torun [concat [list .can create text] $x $y [lrange $args 3 end] -tag $label_name -state hidden]
+#	#eval $torun
+#	#incr ::text_cnt
+#
+#	foreach context $contexts {
+#		# keep track of what labels are displayed in what contexts
+#		add_variable_item_to_context $context $label_name $varcmd
+#	}
+#	return $label_name
 }
 
 proc stop_screen_saver_timer {} {
@@ -926,7 +680,6 @@ proc stop_screen_saver_timer {} {
 	if {[info exists ::screen_saver_alarm_handle] == 1} {
 		after cancel $::screen_saver_alarm_handle
 		unset -nocomplain ::screen_saver_alarm_handle
-		#msg "unset old saver alarm"
 	}
 
 }
@@ -939,8 +692,6 @@ proc delay_screen_saver {} {
 	if {$::settings(screen_saver_delay) != 0 } {
 		set ::screen_saver_alarm_handle [after [expr {60 * 1000 * $::settings(screen_saver_delay)}] "show_going_to_sleep_page"]
 	}
-
-	#msg "delay_screen_saver: [ifexists ::screen_saver_alarm_handle] [after_info]"
 }
 
 proc after_info {} {
@@ -958,7 +709,7 @@ proc show_going_to_sleep_page  {} {
 		set wake [current_alarm_time $::settings(scheduler_wake)]
 		set sleep [current_alarm_time $::settings(scheduler_sleep)]
 		if {[clock seconds] > $wake && [clock seconds] < $sleep} {
-			msg "Delaying screen saver because we are during scheduled forced-awake time"
+			msg -INFO "Delaying screen saver because we are during scheduled forced-awake time"
 			delay_screen_saver
 			return
 		}
@@ -966,26 +717,26 @@ proc show_going_to_sleep_page  {} {
 
 	if {$::de1_num_state($::de1(state)) != "Idle"} {
 		# never go to sleep if the DE1 is not idle
-		msg "delaying screen saver because de1 is not idle: '$::de1_num_state($::de1(state))'"
+		msg -INFO "delaying screen saver because de1 is not idle: '$::de1_num_state($::de1(state))'"
 		delay_screen_saver
 		return
 	}
 
     if {[ifexists ::app_updating] == 1} {
-		msg "delaying screen saver because tablet app is updating"
+		msg -INFO "delaying screen saver because tablet app is updating"
 		delay_screen_saver
 		return
 	}
 
 	if {$::de1(currently_updating_firmware) == 1 || [ifexists ::de1(in_fw_update_mode)] == 1} {
-		msg "delaying screen saver because firmware is updating"
+		msg -INFO "delaying screen saver because firmware is updating"
 		delay_screen_saver
 		return
 	}	
 
 
 
-	puts "show_going_to_sleep_page"
+	msg -INFO "show_going_to_sleep_page"
  	if {$::de1(current_context) == "sleep" || $::de1(current_context) == "saver"} {
  		return
  	}
@@ -1006,11 +757,9 @@ proc change_screen_saver_img {} {
 
 	if {[llength [ifexists ::saver_files_cache]] == 1} {
 		# no need to change the background screen saver image if it's only 1
-		#msg "xxxxno need to change the background screen saver image if it's only 1"
 		return
 	}
 
-	#msg "change_screen_saver_img $::de1(current_context) '[page_displaying_now]'"
 	#if {$::de1(current_context) == "saver"} {
 		#catch {
 			# image delete is not needed, as Tk silently replaces the existing image if the object has the same name
@@ -1022,7 +771,6 @@ proc change_screen_saver_img {} {
 		set err ""
 		set errcode [catch {
 			# this can happen during an upgrade
-			#msg "image create photo saver -file $fn"
 			image create photo saver -file $fn
 			
 			# BUG FIX: this was causing a new canvas item to be created each time a screen saver object was created
@@ -1164,141 +912,123 @@ proc display_popup_android_message_if_necessary {intxt} {
 	if {$msg != ""} {
 		# post the message 1 second after the start, so that there's a slight delay 
 		after 1000 [list borg toast $msg 1]
+		msg -DEBUG "Popup: $msg"
 	}
 	
 }
 
+# For JB's GUI-driver, get some reasonable "t0" to derive DE1 SampleTime
+# It also needs the period, in seconds, which can't be determined from the DE1
+# ::settings() hasn't been loaded as this point, nor has ::machine(hertz)
 
+# With no viable information available, hard-wire 50 Hz for now
+
+if {$::android == 0} {
+	namespace eval ::gui {
+		variable _arbitrary_t0 [expr { [clock milliseconds] / 1000.0 }]
+		variable _st_period [expr { 1.0 / ( 2.0 * 50 ) }]
+		msg -DEBUG "GUI driver using 50 Hz, hard-wired, for DE1 SampleTime"
+	}
+}
+
+set _last_st 0
+
+# TODO (EB): Move the first part of this proc to a parametrized action run from 'dui page update_onscreen_variables'
 proc update_onscreen_variables { {state {}} } {
+	dui page update_onscreen_variables
+	return
+}
 
-	#update_chart
+# Define fake / dummy espresso variables on workstations
+proc set_dummy_espresso_vars {} {
+	if { $::android } { return }
+	
+	if {[expr {int(rand() * 100)}] > 96} {
+		set ::gui::state::_state_change_chart_value \
+			[expr {$::gui::state::_state_change_chart_value * -1}]
 
-	#save_settings
+		if {[expr {rand()}] > 0.5} {
+			set ::settings(current_frame_description) [translate "pouring"]
+		} else {
+			set ::settings(current_frame_description) [translate "preinfusion"]
+		}
+	}
 
-	#set since_last_ping [expr {[clock seconds] - $::de1(last_ping)}]
-	#if {$since_last_ping > 3} {
-		#set ::de1(last_ping) [clock seconds]
-		#if {$::android == 1} {
-			#set ::de1(found) 0
-			#ble_find_de1s
-			#ble_connect_to_de1
-		#}
+	if {$::de1(state) == 2} {
+		# idle
+		if {$::de1(substate) == 0} {
+			if {[expr {int(rand() * 100)}] > 92} {
+				# occasionally set the de1 to heating mode
+				#set ::de1(substate) 1
+				#update_de1_state "$::de1_state(Idle)\x1"
+			}
+		} else {
+			if {[expr {int(rand() * 100)}] > 90} {
+				# occasionally set the de1 to heating mode
+				update_de1_state "$::de1_state(Idle)\x0"
+			}
+		}
+	} elseif {$::de1(state) == 4} {
+		# espresso
+		if {$::de1(substate) == 0} {
+		} elseif {$::de1(substate) < 4} {
+			if {[expr {int(rand() * 100)}] > 80} {
+				# occasionally set the de1 to heating mode
+				#set ::de1(substate) 4
+				update_de1_state "$::de1_state(Espresso)\x4"
+			}
+		} elseif {$::de1(substate) == 4} {
+			if {[expr {int(rand() * 100)}] > 80} {
+				# occasionally set the de1 to heating mode
+				#set ::de1(substate) 5
+				update_de1_state "$::de1_state(Espresso)\x5"
+			}
+		} 
+	}
 
+	#set timerkey "$::de1(state)-$::de1(substate)"
+	#set ::timers($timerkey) [clock milliseconds]
+
+	#if {$::de1(substate) > 6} {
+	#	set ::de1(substate) 0
 	#}
 
-	if {$::android == 0} {
+	# JB's GUI driver needs an event_dict
 
-		if {[expr {int(rand() * 100)}] > 96} {
-			set ::state_change_chart_value [expr {$::state_change_chart_value * -1}]
-			
-			if {[expr {rand()}] > 0.5} {
-				set ::settings(current_frame_description) [translate "pouring"]
-			} else {
-				set ::settings(current_frame_description) [translate "preinfusion"]
-			}
-		}
+	# NB: This seems to be getting called at a 10 Hz rate
+	#     which is faster than the DE1's 25/(2 * line frequency)
 
-		if {$::de1(state) == 2} {
-			# idle
-			if {$::de1(substate) == 0} {
-				if {[expr {int(rand() * 100)}] > 92} {
-					# occasionally set the de1 to heating mode
-					#set ::de1(substate) 1
-					#update_de1_state "$::de1_state(Idle)\x1"
-				}
-			} else {
-				if {[expr {int(rand() * 100)}] > 90} {
-					# occasionally set the de1 to heating mode
-					update_de1_state "$::de1_state(Idle)\x0"
-				}
-			}
-		} elseif {$::de1(state) == 4} {
-			# espresso
-			if {$::de1(substate) == 0} {
-			} elseif {$::de1(substate) < 4} {
-				if {[expr {int(rand() * 100)}] > 80} {
-					# occasionally set the de1 to heating mode
-					#set ::de1(substate) 4
-					update_de1_state "$::de1_state(Espresso)\x4"
-				}
-			} elseif {$::de1(substate) == 4} {
-				if {[expr {int(rand() * 100)}] > 80} {
-					# occasionally set the de1 to heating mode
-					#set ::de1(substate) 5
-					update_de1_state "$::de1_state(Espresso)\x5"
-				}
-			} 
-		}
+	set _now [expr {[clock milliseconds] / 1000.0}]
+	# SampleTime is a 16-bit counter of zero crossings
+	set _de1_sample_time \
+		[expr { int( ( $_now - $::gui::_arbitrary_t0 ) \
+						/ $::gui::_st_period ) % 65536 }]
+	set event_dict [dict create \
+				event_time 	$_now \
+				update_received	$_now \
+				SampleTime	$_de1_sample_time \
+				GroupPressure	$::de1(pressure) \
+				GroupFlow	$::de1(flow) \
+				MixTemp		$::de1(mix_temperature) \
+				HeadTemp	$::de1(head_temperature) \
+				SetHeadTemp	$::de1(goal_temperature) \
+				SetGroupPressure $::de1(goal_pressure) \
+				SetGroupFlow	$::de1(goal_flow) \
+				FrameNumber	$::de1(current_frame_number) \
+				SteamTemp	$::de1(steam_heater_temperature) \
+				this_state	[::de1::state::current_state] \
+				this_substate	[::de1::state::current_substate] \
+					]
 
-        #set timerkey "$::de1(state)-$::de1(substate)"
-        #set ::timers($timerkey) [clock milliseconds]
-
-		#if {$::de1(substate) > 6} {
-		#	set ::de1(substate) 0
-		#}
-
-		if {$::de1(state) == 4} {
-			append_live_data_to_espresso_chart
-		} elseif {$::de1(state) == 5} {
-			#steaming
-			append_live_data_to_espresso_chart
-		}
-	}
-
-	# update the timers
-  	#set state_timerkey "$::de1(state)"
-  	#set substate_timerkey "$::de1(state)-$::de1(substate)"
-  	#set now [clock seconds]
-  	#set ::timers($state_timerkey) $now
-  	#set ::substate_timers($timerkey) $now
-
-
-	#set x [clock milliseconds]
-	global variable_labels
-	set something_updated 0
-	if {[info exists variable_labels($::de1(current_context))] == 1} {
-		set labels_to_update $variable_labels($::de1(current_context)) 
-		foreach label_to_update $labels_to_update {
-			set label_name [lindex $label_to_update 0]
-			set label_cmd [lindex $label_to_update 1]
-			
-			set label_value ""
-			set errcode [catch {
-				set label_value [subst $label_cmd]
-			}]
-
-
-		    if {$errcode != 0} {
-		        catch {
-		            msg "update_onscreen_variables error: $::errorInfo"
-		        }
-		    }
-
-			if {[ifexists ::labelcache($label_name)] != $label_value} {
-				.can itemconfig $label_name -text $label_value
-				set ::labelcache($label_name) $label_value
-				set something_updated 1
-			}
-		}
-	}
-
-	if {$something_updated == 1} {
-		# john 3-10-19 not sure we need to do a forced screen update
-		#update
-	}
-
-	#set y [clock milliseconds]
-	#puts "elapsed: [expr {$y - $x}] $something_updated"
-
-	if {[info exists ::update_onscreen_variables_alarm_handle] == 1} {
-		after cancel $::update_onscreen_variables_alarm_handle
-		unset ::update_onscreen_variables_alarm_handle
-	}
-	set ::update_onscreen_variables_alarm_handle [after $::settings(timer_interval) update_onscreen_variables]
+	if {$::de1(state) == 4} {
+		::de1::event::apply::on_shotvalue_available_callbacks $event_dict
+	} elseif {$::de1(state) == 5} {
+		#steaming
+		::de1::event::apply::on_shotvalue_available_callbacks $event_dict
+	}	
 }
 
 proc set_next_page {machinepage guipage} {
-	#msg "set_next_page $machinepage $guipage"
 	set key "machine:$machinepage"
 	set ::nextpage($key) $guipage
 }
@@ -1306,221 +1036,87 @@ proc set_next_page {machinepage guipage} {
 proc show_settings { {tab_to_show ""} } {
 	backup_settings; 
 
-	puts "show_settings"
+	msg -INFO "show_settings"
+
+    if {$::android == 1} {
+		if {[borg networkinfo] == "none"} {
+        	set ::de1(app_update_button_label) [translate "No Wifi network"];
+    	}	
+    }
 
 	if {$tab_to_show == ""} {
 		page_to_show_when_off $::settings(active_settings_tab)
 		scheduler_feature_hide_show_refresh
-		set_profiles_scrollbar_dimensions
-		set_advsteps_scrollbar_dimensions
 	} else {
 		page_to_show_when_off $tab_to_show
+	}
+	after idle {
+		set_profiles_scrollbar_dimensions
+		set_advsteps_scrollbar_dimensions
 	}
 
 	update_de1_explanation_chart
 
-	#preview_profile 
 }
 
-proc page_to_show_when_off {page_to_show} {
+proc check_if_should_send_user_present_notice {} {
+
+	catch {
+		set seconds_since_last_idle_update [expr {[clock seconds] - $::globals(time_last_idle_update)}]
+		msg -INFO "check_if_should_send_user_present_notice '$::de1_num_state($::de1(state))' - $seconds_since_last_idle_update"
+		if {$::de1_num_state($::de1(state)) == "Idle"} {
+			if {$seconds_since_last_idle_update > 30} {
+				set_user_present
+				set ::globals(time_last_idle_update) [clock seconds]
+				msg -INFO "updating time_last_idle_update and setting user-not-idle"		
+			} else {
+				#msg -INFO "NOT updating time_last_idle_update and setting user-not-idle"		
+			}
+		}
+	}
+}
+
+proc page_to_show_when_off {page_to_show args} {
 	set_next_page off $page_to_show
-	page_show $page_to_show
+	dui page load $page_to_show {*}$args
+	check_if_should_send_user_present_notice
+#	page_show $page_to_show
 }
 
-proc page_show {page_to_show} {
-	set page_to_hide $::de1(current_context)
-	return [page_display_change $page_to_hide $page_to_show] 
+proc page_show {page_to_show args} {
+	dui page load $page_to_show {*}$args
+	check_if_should_send_user_present_notice
+
 }
 
 proc display_brightness {percentage} {
 	set percentage [check_battery_low $percentage]
-	#puts "brightness: $percentage %"
 	get_set_tablet_brightness $percentage
 }
 
 
-proc page_display_change {page_to_hide page_to_show} {
+proc page_display_change {page_to_hide page_to_show args} {
+	dui page load $page_to_show {*}$args
+	check_if_should_send_user_present_notice
+}
 
-	#msg [stacktrace]
-
-	#if {$page_to_hide == ""} {
-	#}
-
-	delay_screen_saver
-
+proc adjust_machine_nextpage { page_to_hide page_to_show } { 
 	set key "machine:$page_to_show"
 	if {[ifexists ::nextpage($key)] != ""} {
 		# there are different possible tabs to display for different states (such as preheat-cup vs hot water)
-		set page_to_show $::nextpage($key)
+		return $::nextpage($key)
 	}
-
-	if {$::de1(current_context) == $page_to_show} {
-		#jbtemp
-		#msg "page_display_change returning because ::de1(current_context) == $page_to_show"
-		return 
-	}
-
-	msg "page_display_change $page_to_hide->$page_to_show"
-
-
-	if {$page_to_hide == "sleep" && $page_to_show == "off"} {
-		msg "discarding intermediate sleep/off state msg"
-		return 
-	} elseif {$page_to_show == "saver"} {
-		if {[ifexists ::exit_app_on_sleep] == 1} {
-			get_set_tablet_brightness 0
-			close_all_ble_and_exit
-		}
-	}
-
-	# signal the page change with a sound
-	say "" $::settings(sound_button_out)
-	#msg "page_display_change $page_to_show"
-	#set start [clock milliseconds]
-
-	# set the brightness in one place
-	if {$page_to_show == "saver" } {
-		if {$::settings(screen_saver_change_interval) == 0} {
-			# black screen saver
-			display_brightness 0
-		} else {
-			display_brightness $::settings(saver_brightness)
-		}
-		borg systemui $::android_full_screen_flags  
-	} else {
-		display_brightness $::settings(app_brightness)
-
-		# let the Android controls show for 5 seconds, and if the user doesn't use them in that time, then hide them
-		after 5000 borg systemui $::android_full_screen_flags
-	}
-
-
-	if {$::settings(stress_test) == 1 && $::de1_num_state($::de1(state)) == "Idle" && [info exists ::idle_next_step] == 1} {
-
-		msg "Doing next stress test step: '$::idle_next_step '"
-		set todo $::idle_next_step 
-		unset -nocomplain ::idle_next_step 
-		eval $todo
-	}
-
-
-	#global current_context
-	set ::de1(current_context) $page_to_show
-
-	#puts "page_display_change hide:$page_to_hide show:$page_to_show"
-	catch {
-		.can itemconfigure $page_to_hide -state hidden
-	}
-	#.can itemconfigure [list "pages" "splash" "saver"] -state hidden
-
-	if {[info exists ::delayed_image_load($page_to_show)] == 1} {
-		set pngfilename	$::delayed_image_load($page_to_show)
-		msg "Loading skin image from disk: $pngfilename"
-		
-		set errcode [catch {
-			# this can happen if the image file has been moved/deleted underneath the app
-			#fallback is to at least not crash
-			msg "page_display_change image create photo $page_to_show -file $pngfilename" 
-			image create photo $page_to_show -file $pngfilename
-			#msg "image create photo $page_to_show -file $pngfilename"
-		}]
-
-	    if {$errcode != 0} {
-	        catch {
-	            msg "image create photo error: $::errorInfo"
-	        }
-	    }
-
-	    foreach {page img} [array get ::delayed_image_load] {
-	    	if {$img == $pngfilename} {
-	    		
-	    		# Matching delayed image load to every page that references it
-	    		# this avoids loading the same iamge over and over, for each page referencing it
-
-				set errcode [catch {
-					# this error can happen if the image file has been moved/deleted underneath the app, fallback is to at least not crash
-					.can itemconfigure $page -image $page_to_show -state hidden					
-				}]
-
-			    if {$errcode != 0} {
-			        catch {
-			            msg ".can itemconfigure page_to_show ($page/$page_to_show) error: $::errorInfo"
-			        }
-			    }
-
-				unset -nocomplain ::delayed_image_load($page)
-	    	}
-	    }
-
-	}
-
-	set errcode [catch {
-		.can itemconfigure $page_to_show -state normal
-	}]
-
-	if {$errcode != 0} {
-		catch {
-			msg ".can itemconfigure page_to_show error: $::errorInfo"
-		}
-
-	} 
-
-	set these_labels [ifexists ::existing_labels($page_to_show)]
-	#msg "these_labels: $these_labels"
-
-	if {[info exists ::all_labels] != 1} {
-		set ::all_labels {}
-		foreach {page labels} [array get ::existing_labels]  {
-			set ::all_labels [concat $::all_labels $labels]
-		}
-		set ::all_labels [lsort -unique $::all_labels]
-	}
-
-	#msg "Hiding [llength $::all_labels] labels"
-	foreach label $::all_labels {
-		if {[.can itemcget $label -state] != "hidden"} {
-			.can itemconfigure $label -state hidden
-			#msg "hiding: '$label'"
-		}
-	}
-
-	#msg "Showing [llength $these_labels] labels"
-	foreach label $these_labels {
-		.can itemconfigure $label -state normal
-		#msg "showing: '$label'"
-	}
-
-	update
-	#set end [clock milliseconds]
-	#puts "elapsed: [expr {$end - $start}]"
-
-	global actions
-	if {[info exists actions($page_to_show)] == 1} {
-		foreach action $actions($page_to_show) {
-			eval $action
-			msg "action: '$action"
-		}
-	}
-
-	#msg "Switched to page: $page_to_show [stacktrace]"
-	msg "Switched to page: $page_to_show"
-
-	update_onscreen_variables
-
-	hide_android_keyboard
-
+	return 1
 }
 
 proc hide_android_keyboard {} {
-	# make sure on-screen keyboard doesn't auto-pop up
-	sdltk textinput off
-	focus .
+	dui platform hide_android_keyboard
 }
 
 proc update_de1_explanation_chart_soon  { {context {}} } {
 	# we can optionally delay displaying the chart until data from the slider stops coming
-	update_de1_explanation_chart
-	return
+	#update_de1_explanation_chart
+	#return
 	
 	#after 10 {after cancel update_de1_explanation_chart; after idle update_de1_explanation_chart}
 	if {[info exists ::chart_update_id] == 1} {
@@ -1533,8 +1129,6 @@ proc update_de1_explanation_chart_soon  { {context {}} } {
 }
 
 proc update_de1_explanation_chart { {context {}} } {
-	#puts "update_de1_explanation_chart"
-	#puts "update_de1_explanation_chart 1: $::settings(settings_profile_type)"
 
 	espresso_de1_explanation_chart_elapsed length 0
 	espresso_de1_explanation_chart_temperature length 0
@@ -1583,7 +1177,6 @@ proc update_de1_explanation_chart { {context {}} } {
 		return
 	}
 
-	#puts "update_de1_explanation_chart 2"
 
 	set seconds 0
 
@@ -1652,13 +1245,11 @@ proc update_de1_explanation_chart { {context {}} } {
 	set approximate_ramptime [expr {0.01 + (abs($espresso_pressure - $preinfusion_pressure) * 0.5)}]
 	set pressure_hold_time $::settings(espresso_hold_time)
 
-	#puts "approximate_ramptime: $approximate_ramptime / pressure_hold_time: $pressure_hold_time"
 	if {$approximate_ramptime > $pressure_hold_time} {
 		set espresso_pressure [expr {$pressure_hold_time * 2}]
 	}
 
 
-	#puts "pressure_hold_time: $pressure_hold_time"
 
 	set espresso_decline_time $::settings(espresso_decline_time)
 	#if {$pressure_hold_time > $approximate_ramptime} {
@@ -1883,7 +1474,6 @@ proc update_de1_plus_advanced_explanation_chart { {context {}} } {
 
 		set pump [ifexists props(pump)]
 
-		#puts "$cnt [array get props]\n"
 
 		set theseconds [ifexists props(seconds)]
 		set transition [ifexists props(transition)]
@@ -1894,7 +1484,6 @@ proc update_de1_plus_advanced_explanation_chart { {context {}} } {
 		}
 
 		if {$pump == "pressure"} {
-			#puts "pressure [ifexists props(pressure)] $seconds"
 
 			if {$previous_pump == "flow"} {
 				espresso_de1_explanation_chart_pressure append [ifexists props(pressure)]
@@ -1943,7 +1532,6 @@ proc update_de1_plus_advanced_explanation_chart { {context {}} } {
 
 
 		} elseif {$pump == "flow"} {
-			#puts "flow [ifexists props(flow)] $seconds"
 
 			if {$previous_pump == "pressure"} {
 				espresso_de1_explanation_chart_flow append [ifexists props(flow)]
@@ -2003,11 +1591,16 @@ proc update_de1_plus_advanced_explanation_chart { {context {}} } {
 
 proc setup_images_for_first_page {} {
 	
-	msg "setup_images_for_first_page"
-	set fn [random_splash_file]
+	msg -DEBUG "setup_images_for_first_page"
+	set fn [dui::image::find "splash.jpg"]
+
+	if {$fn == "" || ![file exists $fn]} {
+		msg "skin/splash.jpg does not exist. Using default wallpaper"
+		set fn [random_splash_file]
+	}
 	image create photo splash -file $fn 
 	.can create image {0 0} -anchor nw -image splash -tag splash -state normal
-	pack .can
+	
 	update
 	return
 }
@@ -2015,13 +1608,22 @@ proc setup_images_for_first_page {} {
 proc run_de1_app {} {
 	page_display_change "splash" "off"
 }
+package require de1_shot 2.0
 
 proc ui_startup {} {
-
-	load_settings
-	setup_environment
-	bluetooth_connect_to_devices
 	
+	load_settings
+
+	# Metric is now uppercase, so this is translation code
+	if { $::settings(skin) eq "metric" } {
+		set ::settings(skin) "Metric"
+	}
+
+	#::profile::sync_from_legacy	
+	setup_environment
+
+	bluetooth_connect_to_devices
+
 	if {[ifexists ::settings(enable_shot_history_export)] == "1"} {
 		shot_history_export
 	}
@@ -2030,13 +1632,37 @@ proc ui_startup {} {
 		shot_history_count_profile_use
 	}
 	#ble_find_de1s
-	
+
 	setup_images_for_first_page
 	setup_images_for_other_pages
+	history_viewer init
+
+	plugins init
+
+	set app_version [package version de1app]
+
+	if {$::settings(last_version) != $app_version  && [ifexists ::settings(app_updates_beta_enabled)] < 2} {
+		if {$::settings(espresso_count) == 0} {
+			set message "You are running Version $app_version."
+		} else {
+			set message "Version updated from $::settings(last_version) to $app_version."
+		}
+		if {[ifexists ::changelog_link] != ""} {
+			set message "$message\n Tap here to open the latest changelog"
+		}
+		version_page $message [translate "Ok"]
+		set ::settings(last_version) $app_version
+		save_settings
+	}
+
+	# auto-setup of DUI pages. dui init and setting of folders may need to be done before skin & plugins inits?
+	#dui init
+	dui font add_dirs "[homedir]/fonts"
+	dui item add_image_dirs "[homedir]/skins/$::settings(skin)" "[homedir]/skins/default"
+	dui setup_ui
+
 	.can itemconfigure splash -state hidden
-
-	load_plugins
-
+	
 	#after $::settings(timer_interval) 
 	update_onscreen_variables
 	delay_screen_saver
@@ -2045,13 +1671,22 @@ proc ui_startup {} {
 	check_if_battery_low_and_give_message
 
 	# check for app updates, some time after startup, and then every 24h thereafter
-	after 3000 scheduled_app_update_check
+	if {$::settings(do_async_update_check) == 1} {
+		# no need to delay doing a remove update check, if we're doing it async
+		#after 500 scheduled_app_update_check
+	} else {
+		#after 3000 scheduled_app_update_check
+	}
+
+	schedule_app_update_check
+
 	tcl_introspection
 
 	run_de1_app
 	vwait forever
 }
 
+package require snit
 # from https://wiki.tcl-lang.org/25189
 snit::widget multiline_entry {
     delegate option * to text
@@ -2198,17 +1833,22 @@ proc show_hide_from_variable {widgetids n1 n2 op} {
 
 # causes the water level widget to change between colors (blinking) at an inreasing rate as the water level goes lower
 proc water_level_color_check {widget} {
+
 	if {$::settings(waterlevel_indicator_blink) != 1} {
 		return
 	}
 
-	#puts water_level_color_check
 
 	if {[info exists ::water_level_color_check_count] != 1} {
 		set ::water_level_color_check_count  0
 	}
 	incr ::water_level_color_check_count 
 	set colors [list  "#7ad2ff"  "#ff6b6b"]
+
+	if {[ifexists ::insight_dark_mode] == 1} {
+		set colors [list  "#003e5d"  "#790000"]
+	}
+
 	if {$::water_level_color_check_count > [expr {-1 + [llength $colors]}] } {
 		set ::water_level_color_check_count 0
 	}
@@ -2223,7 +1863,6 @@ proc water_level_color_check {widget} {
 	#set start_blinking_level $::settings(waterlevel_blink_start_offset)
 	set blinkrate $::settings(waterlevel_indicator_blink_rate)
 
-	#puts "$::de1(water_level) | $start_blinking_level | $remaining_water"
 	set color [lindex $colors $::water_level_color_check_count]
 	if {$remaining_water > 7} {
 		# check the water rate infrequently if there is enough water and don't blink it
@@ -2238,7 +1877,9 @@ proc water_level_color_check {widget} {
 		set blinkrate 500
 	}
 
-	$widget configure -background $color
+	catch {
+		$widget configure -background $color
+	}
 	after $blinkrate water_level_color_check $widget
 }
 
@@ -2333,7 +1974,8 @@ proc calibration_gui_init {} {
 	if {[ifexists ::settings(enable_fahrenheit)] == 1} {
 		set ::settings(enable_fahrenheit) 0
 		set ::calibration_disabled_fahrenheit 1
-		msg "Calibration disabled Fahrenheit"
+		msg -NOTICE "Calibration disabled Fahrenheit" \
+			"::settings(enable_farenheit) has been set to 0"
 	}
 
 	# set the entry fields back to normal
@@ -2379,11 +2021,13 @@ proc calibration_gui_init {} {
 
 		after 1000 de1_read_calibration "temperature"
 		after 2000 de1_read_calibration "pressure"
-		after 3000 de1_read_calibration "flow"
+		#after 3000 get_calibration_flow_multiplier
+		#after 3000 de1_read_calibration "flow"
 
 		after 4000 de1_read_calibration "temperature" "factory"
 		after 5000 de1_read_calibration "pressure" "factory"
-		after 6000 de1_read_calibration "flow" "factory"
+		#after 6000 de1_read_calibration "flow" "factory"
+
 
 	}
 }
@@ -2392,7 +2036,6 @@ proc import_god_shots_from_common_format {} {
 
 
 	set import_files [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/godshots/import/common/" *.csv]]
-	#puts "import_files: $import_files"
 	foreach import_file $import_files {
 		set import_files_array($import_file) 1
 	}
@@ -2404,7 +2047,6 @@ proc import_god_shots_from_common_format {} {
 	}
 
 	set files_to_import [array names import_files_array]
-	#puts "files_to_import: $files_to_import"
 	if {$files_to_import != ""} {
 		foreach file_to_import $files_to_import {
 			set fn_import "[homedir]/godshots/import/common/$file_to_import"
@@ -2412,7 +2054,7 @@ proc import_god_shots_from_common_format {} {
 			if {[file exist $fn_export] == 1} {
 				continue
 			}
-			puts "Importing common file format into god shot from '$fn_import' to '$fn_export'"
+			msg -INFO "Importing common file format into god shot from '$fn_import' to '$fn_export'"
 
 			set import_espresso_elapsed {}
 			set import_espresso_pressure {}
@@ -2434,7 +2076,7 @@ proc import_god_shots_from_common_format {} {
 				incr linecnt
 				if {$linecnt == 1} {
 					set labels [split $line ,]
-					puts "labels: '[join $labels |]'"
+					msg -DEBUG "labels: '[join $labels |]'"
 					continue
 				}
 
@@ -2442,7 +2084,6 @@ proc import_god_shots_from_common_format {} {
 				if {[lindex $parts 0] == "meta"} {
 					set metatype [string trim [lindex $parts 9]]
 					set metadata [string trim [lindex $parts 10]]
-					#puts "metadata: '$metadata' / metatype: '$metatype'"
 					if {[string tolower $metatype] == "date"} {
 					 	set meta(clock) [iso8601stringparse $metadata]
 					} else {
@@ -2461,7 +2102,6 @@ proc import_god_shots_from_common_format {} {
 						set momentarray($labelname) $part
 					}
 
-					#puts [array get momentarray]
 
 					if {[ifexists momentarray(elapsed)] != ""} {
 						lappend import_espresso_elapsed [ifexists momentarray(elapsed)]
@@ -2477,7 +2117,7 @@ proc import_god_shots_from_common_format {} {
 
 			# we have no gravimetric flow data, but we have weight data, then remake the gravimetric flow rate list
 			if {[lsort -unique [ifexists import_espresso_flow]] == 0} {
-				puts "we have no gravimetric flow data, but we have weight data, so remaking the gravimetric flow rate list using incremental weight data"
+				msg -DEBUG "we have no gravimetric flow data, but we have weight data, so remaking the gravimetric flow rate list using incremental weight data"
 				set import_espresso_flow {}
 				set previous_weight 0
 				set previous_time 0
@@ -2503,7 +2143,6 @@ proc import_god_shots_from_common_format {} {
 						set diff_weight_per_second 0
 					}
 
-					#puts "cnt $cnt: $this_time $this_weight = $diff_weight_per_second"
 					set multiplier2 [expr {1 - $multiplier1}];
 					set smoothed_flow_rate [expr {($smoothed_flow_rate * $multiplier1) + ($diff_weight_per_second * $multiplier2)}]
 
@@ -2529,20 +2168,14 @@ espresso_notes [list [join $notes_list { - }]]
 }]
 
 			write_file $fn_export $exportdata
-
-			#puts [array get meta]
-			#puts ---
-		
 		}
 	}
-
 }
 
 proc god_shot_files {} {
 	import_god_shots_from_common_format
 
 	set files [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/godshots/" *.shot]]
-	#puts "skin_directories: $dirs"
 	set dd {}
 	foreach f $files {
 	    
@@ -2556,13 +2189,13 @@ proc god_shot_files {} {
 	    } else {
 	    	set fnexport "[homedir]/godshots/export/columnar/[file rootname $f].csv"
 			if {[file exists $fnexport] != 1} { 
-				puts "Exporting God Shot file from $fn to $fnexport" 
+				msg -INFO "Exporting God Shot file from $fn to $fnexport" 
 				export_csv godprops $fnexport
 			}
 
 	    	set fnexport_common "[homedir]/godshots/export/common/[file rootname $f].csv"
 			if {[file exists $fnexport_common] != 1} { 
-				puts "Exporting God Shot file from $fn to $fnexport_common" 
+				msg -INFO "Exporting God Shot file from $fn to $fnexport_common" 
 				export_csv_common_format godprops $fnexport_common
 			}
 
@@ -2572,14 +2205,12 @@ proc god_shot_files {} {
 		lappend dd $name $f 
 	}
 
-	#puts "god shots: '$dd'"
 	return $dd
 }
 
 
 
 proc fill_god_shots_listbox {} {
-	#puts "fill_skin_listbox $widget" 
 	unset -nocomplain ::god_shot_filenames
 	set widget $::globals(god_shots_widget)
 	$widget delete 0 99999
@@ -2617,13 +2248,11 @@ proc save_to_god_shots {} {
 		return 
 	}
 
-	#puts "ll2: '[llength [espresso_pressure range 0 end]]'"
 
 	set clock [clock seconds]
 	set filename [subst {[clock format $clock -format "%Y%m%dT%H%M%S"].shot}]
 
 	set files [lsort -dictionary [glob -nocomplain -tails -directory "[homedir]/godshots/" *.shot]]
-	#puts "skin_directories: $dirs"
 	set dd {}
 	set msg [translate "Saved"]
 	set updated 0
@@ -2632,7 +2261,7 @@ proc save_to_god_shots {} {
 	    array unset -nocomplete godprops
 	    array set godprops [encoding convertfrom utf-8[read_binary_file $fn]]
 	    if {[ifexists godprops(name)] == $::settings(god_espresso_name)} {
-	    	puts "found pre-existing god shot $f with the same description"
+	    	msg -NOTICE "found pre-existing god shot $f with the same description"
 	    	set filename $f
 	    	set msg [translate "Updated"]
 	    	set updated 1
@@ -2665,7 +2294,7 @@ proc save_to_god_shots {} {
 	if {$updated != 1} {
 		fill_god_shots_listbox
 	}
-	puts "save_to_god_shots ran"
+	msg -INFO "save_to_god_shots ran"
 
 	god_shot_save
 
@@ -2694,7 +2323,6 @@ proc load_god_shot { {force 0} } {
 
 	if {$::de1(current_context) != "describe_espresso0" && $force == 0} {
 		# spurious tk call from Android
-		#puts "retruning"
 		return 
 	}
 
@@ -2703,7 +2331,6 @@ proc load_god_shot { {force 0} } {
 		return 
 	}
 	set f [ifexists ::god_shot_filenames($stepnum)]
-	#puts "god shot: $stepnum $f"
 	if {$stepnum == ""} {
 		return
 	}
@@ -2752,7 +2379,7 @@ proc profile_title {} {
 	}
 }
 
-# space = idle
+# i = idle (0)
 # f = flush (1)
 # e = espresso (2)
 # s = steam (3)
@@ -2760,55 +2387,60 @@ proc profile_title {} {
 # the number version causes the state to arrive as if the DE1 has caused it, such as from the GHC.  
 # This is useful for testing that the GUI responds correctly to GHC caused events.  
 
+# NOTE:
+# proc hide_android_keyboard {}, in addition to hiding the on-screen keyboard, keeps the navbar hidden when
+# a physical keyboard is connected. This may, however, also redirect keypresses from the physical keyboard.
+# Using the CTRL modifier key with the desired key can bypass this issue.
+
 proc handle_keypress {keycode} {
-	msg "Keypress detected: $keycode / $::some_droid"
+	msg -DEBUG "Keypress detected: $keycode / $::some_droid"
 
 	if {($::some_droid != 1 && $keycode == 101) || ($::some_droid == 1 && $keycode == 8)} {
-		# e = espresso 
+		# e = espresso (emulate GUI button press)
 		start_espresso
 
-	} elseif {($::some_droid != 1 && $keycode == 32) || ($::some_droid == 1 && $keycode == 44)} {
-		# space = idle
+	} elseif {($::some_droid != 1 && $keycode == 105) || ($::some_droid != 1 && $keycode == 32) || ($::some_droid == 1 && $keycode == 12) || ($::some_droid == 1 && $keycode == 44)} {
+		# i (or space bar) = idle (emulate GUI button press) 
 		start_idle
 
 	} elseif {($::some_droid != 1 && $keycode == 102) || ($::some_droid == 1 && $keycode == 9)} {
-		# f = flush
+		# f = flush (emulate GUI button press)
 		start_flush
 
 	} elseif {($::some_droid != 1 && $keycode == 115) || ($::some_droid == 1 && $keycode == 22)} {
-		# s = steam
+		# s = steam (emulate GUI button press)
 		start_steam
 
 	} elseif {($::some_droid != 1 && $keycode == 119) || ($::some_droid == 1 && $keycode == 26)} {
-		# w = water
+		# w = water (emulate GUI button press)
 		start_water
 
 	} elseif {($::some_droid != 1 && $keycode == 112) || ($::some_droid == 1 && $keycode == 19)} {
-		# w = water
+		# p = sleep (emulate GUI button press)
 		start_sleep
 
 	} elseif {($::some_droid != 1 && $keycode == 50) || ($::some_droid == 1 && $keycode == 31)} {
-		# ctrl-e = espresso or 2 on android
+		# 2 = espresso (emulate GHC button press)
 		update_de1_state "$::de1_state(Espresso)\x0"
 		de1_send_state "make espresso" $::de1_state(Espresso)
 
 	} elseif {($::some_droid != 1 && $keycode == 48) || ($::some_droid == 1 && $keycode == 39)} {
-		# ctrl-space = idle or 0 on android
+		# 0 = idle (emulate GHC button press)
 		update_de1_state "$::de1_state(Idle)\x0"
 		de1_send_state "go idle" $::de1_state(Idle)
 
 	} elseif {($::some_droid != 1 && $keycode == 49) || ($::some_droid == 1 && $keycode == 30)} {
-		# ctrl-f = flush or 1 on android
+		# 1 = flush (emulate GHC button press)
 		update_de1_state "$::de1_state(HotWaterRinse)\x0"
 		de1_send_state "hot water rinse" $::de1_state(HotWaterRinse)
 
 	} elseif {($::some_droid != 1 && $keycode == 51) || ($::some_droid == 1 && $keycode	== 32)} {
-		# ctrl-s = steam or 3 on android
+		# 3 = steam (emulate GHC button press)
 		update_de1_state "$::de1_state(Steam)\x0"
 		de1_send_state "make steam" $::de1_state(Steam)
 
 	} elseif {($::some_droid != 1 && $keycode == 52) || ($::some_droid == 1 && $keycode == 33)} {
-		# ctrl-w = water or 4 on android
+		# 4 = water (emulate GHC button press)
 		update_de1_state "$::de1_state(HotWater)\x0"
 		de1_send_state "make hot water" $::de1_state(HotWater)
 	}
@@ -2817,3 +2449,606 @@ proc handle_keypress {keycode} {
 #install_de1_app_icon
 #install_de1plus_app_icon
 #install_this_app_icon
+
+
+namespace eval ::gui::state {
+
+
+	# ::state_change_chart_value -- also used by append_live_data_to_espresso_chart
+
+	variable _state_change_chart_value 10000000
+
+	# As GUI updates can be asynchronous to DE1 state changes
+	# keep track of the GUI's state separately
+
+	# -1 is retained from the previous logic as an indicator
+	# to not draw a frame separator at the start of the shot
+	# as well as to set the current_frame_description
+	# See further that previous logic now in
+	# ::gui::update::shot_frame_info
+
+	variable _previous_framenumber -1
+	variable _current_framenumber -1
+
+	proc init {} {
+
+		::gui::state::reset_framenumbers
+		::gui::state::reset_shotsample_deltas
+		msg -DEBUG "::gui::state::init done"
+	}
+
+	proc reset_framenumbers {} {
+
+		set ::gui::state::_current_framenumber -1
+		set ::gui::state::_previous_framenumber -1
+	}
+
+	proc current_framenumber {} {
+		return $::gui::state::_current_framenumber
+	}
+
+	proc previous_framenumber {} {
+		return $::gui::state::_previous_framenumber
+	}
+
+	proc reset_shotsample_deltas {} {
+
+		set ::gui::state::_delta_flow 0
+		set ::gui::state::_delta_pressure 0
+		set ::gui::state::_previous_flow 0
+		set ::gui::state::_previous_pressure 0
+	}
+
+} ;# ::gui::state
+
+::de1::event::listener::on_connect_add [lambda {args} {
+	::gui::state::reset_framenumbers
+	::gui::state::reset_shotsample_deltas
+}]
+
+
+# JB's off-line GUI driver needs some variables initialized
+# that are normally done on DE1 connect
+
+if {$::android == 0} {
+	::gui::state::reset_framenumbers
+	::gui::state::reset_shotsample_deltas
+}
+
+
+
+
+namespace eval ::gui::callbacks {
+
+	proc on_major_state_change {event_dict} {
+
+		switch [dict get $event_dict this_state] {
+
+			Espresso {
+				reset_gui_starting_espresso
+			}
+
+			Steam {
+				reset_gui_starting_steam
+			}
+
+			HotWater {
+				reset_gui_starting_hotwater
+			}
+
+			HotWaterRinse {
+				reset_gui_starting_hot_water_rinse
+			}
+
+		}
+	}
+
+	::de1::event::listener::on_major_state_change_add -noidle  ::gui::callbacks::on_major_state_change
+
+
+	proc on_shotvalue_available {event_dict} {
+
+		# Preserve order from code prior to 2021-02
+
+		::gui::update::shot_frame_info $event_dict
+		::gui::update::append_live_data_to_espresso_chart $event_dict
+	}
+
+	::de1::event::listener::on_shotvalue_available_add ::gui::callbacks::on_shotvalue_available
+
+
+
+	# only_when_substate_present is not being loaded at this time as seems to freeze the GUI
+	# See binary.tcl: proc update_de1_state {statechar} as of early 2021
+
+	proc only_when_substate_present {event_dict} {
+
+		set this_state [dict get $event_dict this_state]
+		set this_substate [dict get $event_dict this_substate]
+
+		if { [dict get $event_dict this_substate] != "" } {
+
+			msg -DEBUG "::skins_page_change_due_to_de1_state_change for ${this_state},${this_substate}"
+
+			#
+			# This looks wonky, but GUI will freeze if sent on every change
+			# logic and catch use after earlier code in binary.tcl: proc update_de1_state {statechar}
+			#
+			try {
+				skins_page_change_due_to_de1_state_change  [dict get $event_dict this_state]
+			} on error {result opts_dict} {
+				msg -ERROR "::skins_page_change_due_to_de1_state_change ${this_state} $result $opts_dict"
+			}
+		}
+	}
+
+} ;# ::gui::callbacks
+
+
+
+namespace eval ::gui::notify {
+
+    	# Show "normal" messages around waiting for updates in the GUI?
+
+	variable show_scale_update_watchdog_notifications False
+
+	proc scale_event {event_id args} {
+
+		switch -exact -- $event_id {
+
+			abandoning_updates {
+				if { $::settings(show_scale_notifications) } {
+					borg toast [translate {ABANDONING scale updates}]
+				}
+			}
+
+			retrying_updates {
+
+			    if { $::gui::notify::show_scale_update_watchdog_notifications } {
+				borg toast "[translate {Retrying scale updates}] [join $args]"
+			    }
+			}
+
+			timeout_updates {
+				if { $::settings(show_scale_notifications) } {
+					borg toast "[translate {Check scale}]"
+				}
+			}
+
+			scale_reporting {
+				if { $::settings(show_scale_notifications) } {
+					borg toast "[translate {Scale reporting}]"
+				}
+			}
+
+			not_connected {
+
+			    # With the ble reconnect logic
+			    # `ble` will report a connection event when attempting to connect.
+			    # When the connection fails, the disconnect logic fires.
+			    # This has been reported to cause "ticking" sounds every 30 seconds.
+
+			    if { [::de1::state::current_state] == "Sleep" } { return }
+
+				if { $::settings(show_scale_notifications) && $::de1(bluetooth_scale_connection_attempts_tried) < 1} {
+					set what [translate {WARNING: Scale not connected}]
+					borg toast $what
+					say $what $::settings(sound_button_in)
+				}
+			}
+
+			no_updates {
+				if { $::settings(show_scale_notifications) } {
+					set what [translate {WARNING: Scale not updating}]
+					borg toast $what
+					say $what $::settings(sound_button_in)
+				}
+			}
+
+			record_complete {
+				set what [translate {Shot complete}]
+				borg toast $what
+				say $what $::settings(sound_button_in)
+			}
+
+			saw_stop {
+				borg toast [translate {Stopping for weight}]
+			}
+
+			saw_skip {
+				borg toast [translate {Advancing to next step}]
+			}
+
+			default {
+
+				msg -ERROR "::gui::notify::scale_event called without matching event_id: $event_id $args"
+			}
+
+		}
+	}
+
+	proc de1_event {event_id args} {
+
+		switch -exact -- $event_id {
+
+			sav_stop {
+
+				borg toast [translate {Stopping for volume}]
+			}
+
+			default {
+
+				msg -ERROR "::gui::notify::de1_event called without matching event_id: $event_id $args"
+			}
+		}
+	}
+
+} ;# ::gui::notify
+
+namespace eval ::gui::update {
+
+	proc shot_frame_info {event_dict} {
+
+		# Logic extracted from update_de1_shotvalue in binary.tcl - 2021-02
+
+		set ::gui::state::_previous_framenumber [::gui::state::current_framenumber]
+		set ::gui::state::_current_framenumber [dict get $event_dict FrameNumber]
+
+		set this_substate [dict get $event_dict this_substate]
+
+
+		if {[::gui::state::current_framenumber] != [::gui::state::previous_framenumber]} {
+
+			# draw a vertical line at each frame change
+
+			# The following logic, retained from prior versions, is likely a noop
+			# as the updates from the DE1 will set the framenumber to 0 or higher
+
+			set ::de1(app_stepskip_triggered) False
+
+			if {[::gui::state::previous_framenumber] >= 0} {
+				# don't draw a line a the first frame change
+				set ::gui::state::_state_change_chart_value \
+					[expr {$::gui::state::_state_change_chart_value * -1}]
+			}
+
+			switch $::settings(settings_profile_type) {
+
+				settings_2a {
+
+					switch [::gui::state::current_framenumber] {
+						0 -
+						1 { set framedesc [translate "1: preinfuse"] }
+						2 { set framedesc [translate "2: rise and hold"] }
+						default { set framedesc [translate "3: decline"] }
+					}
+				}
+
+				settings_2b {
+
+					switch [::gui::state::current_framenumber] {
+						0 -
+						1 { set framedesc [translate "1: preinfuse"] }
+						2 { set framedesc [translate "2: hold"] }
+						default { set framedesc [translate "3: decline"] }
+					}
+				}
+
+				settings_2c {
+
+					array set thisadvstep \
+						[lindex $::settings(advanced_shot) \
+							 [::gui::state::current_framenumber]]
+
+					set framedesc [format "%s: %s" \
+							       [expr {1 + [::gui::state::current_framenumber]}] \
+							       [ifexists thisadvstep(name)] \
+							      ]
+				}
+
+				default { set framedesc "-" }
+			}
+
+			switch -- $this_substate {
+
+				preinfusion -
+				pouring {
+					set ::settings(current_frame_description) $framedesc
+					display_popup_android_message_if_necessary $framedesc
+				}
+
+				default { set ::settings(current_frame_description) "" }
+			}
+		}
+
+		# These are checked on every update as the frame number doesn't change.
+		# The previous logic, duplicated here, to suppress drawing the first "line"
+		# as well as that to set the first frame's lable is dependent on
+		# continually overriding the previous value to -1,
+		# as the DE1 updates set it on every report.
+
+		switch -- $this_substate {
+
+			ending {
+				set ::settings(current_frame_description) [translate "ending"]
+				::gui::state::reset_framenumbers
+			}
+
+			heating -
+			stabilising -
+			"final heating" {
+				set ::settings(current_frame_description) [translate "heating"]
+				::gui::state::reset_framenumbers
+			}
+
+			default {}
+		}
+
+	} ;# shot_frame_info
+
+
+	proc append_live_data_to_espresso_chart {event_dict} {
+
+		set this_state [dict get $event_dict this_state]
+		set this_substate [dict get $event_dict this_substate]
+		set this_flow [dict get $event_dict GroupFlow]
+		set this_pressure [dict get $event_dict GroupPressure]
+
+		# As this gets called every 4-5 times a second, and usually does nothing
+		# bail out early and simplify the logic that follows
+
+		if { ! [::de1::state::is_flow_state \
+				[dict get $event_dict this_state] \
+				[dict get $event_dict this_substate]] } { return }
+
+		# Intentionally not returning on non-flow substates to allow for recording during "ending"
+
+		dict with event_dict {
+
+			# TODO: If only tracking during flow states, the first sample will be "bad"
+			#       Either need to run on every sample, or reset on entering a flow state
+
+			# TODO: Decide how to make these dimensionally meaningful
+			#       Probably should be "per second", which would divide by 4 or about 5 (50/60 Hz)
+
+			set ::gui::state::_delta_flow \
+				[expr { $this_flow - $::gui::state::_previous_flow }]
+			set ::gui::state::_delta_pressure \
+				[expr { $this_pressure - $::gui::state::_previous_pressure }]
+
+			set ::gui::state::_previous_flow $this_flow
+			set ::gui::state::_previous_pressure $this_pressure
+
+			switch -- $this_state {
+
+				Espresso {
+					if { [::de1::state::is_flow_during_state $this_state $this_substate] } {
+
+						# Change to estimated DE1 time, when implemented
+
+						set millitime [espresso_millitimer $update_received]
+						set mtime [expr {$millitime/1000.0}]
+
+						# Everything from here on is logically and computationally
+						# from previous code. References to $::de1() replaced with
+						# references to $event_dict contents
+
+						set last_elapsed_time_index [expr {[espresso_elapsed length] - 1}]
+						set last_elapsed_time 0
+						if {$last_elapsed_time_index >= 0} {
+							set last_elapsed_time \
+								[espresso_elapsed range \
+									 $last_elapsed_time_index \
+									 $last_elapsed_time_index]
+						}
+
+						if {$mtime > $last_elapsed_time} {
+
+							# this is for handling cases where a god shot
+							# has already loaded a time axis
+
+							espresso_elapsed append $mtime
+						}
+
+						if {$::de1(scale_weight) == ""} {
+							set ::de1(scale_weight) 0
+						}
+						espresso_weight append \
+							[round_to_two_digits $::de1(scale_weight)]
+						espresso_weight_chartable append \
+							[round_to_two_digits [expr {0.10 * $::de1(scale_weight)}]]
+
+						espresso_pressure append [round_to_two_digits $GroupPressure]
+						espresso_flow append [round_to_two_digits $GroupFlow]
+						espresso_flow_2x append [round_to_two_digits \
+										 [expr {2.0 * $GroupFlow}]]
+
+						set resistance 0
+						catch {
+							# main calculation, based on laminar flow. # linear adjustment
+							set resistance [round_to_two_digits \
+										[expr {$GroupPressure \
+										       / pow($GroupFlow, 2) }]]
+						}
+						espresso_resistance append $resistance
+
+
+						if {$::de1(scale_weight_rate) != ""} {
+
+							# if a bluetooth scale is recording shot weight,
+							# graph it along with the flow meter
+
+							espresso_flow_weight append \
+								[round_to_two_digits \
+									 $::de1(scale_weight_rate)]
+
+							espresso_flow_weight_raw append \
+								[round_to_two_digits \
+									 $::de1(scale_weight_rate_raw)]
+
+							espresso_flow_weight_2x append \
+								[expr {2.0 * [round_to_two_digits \
+										      $::de1(scale_weight_rate)] }]
+
+							if { [espresso_resistance_weight length] > 0 } {
+								set resistance_weight espresso_resistance_weight(end)
+							} else {
+	                          set resistance_weight 0
+							}
+							catch {
+								if {    $GroupPressure != 0 \
+										&& $::de1(scale_weight_rate) != "" \
+										&& $::de1(scale_weight_rate) != 0} {
+
+									# if the scale is available,
+									# use that instead of the flowmeter calculation,
+									# to determine resistance
+
+									set resistance_weight [round_to_two_digits \
+										[expr {$GroupPressure \
+										       / pow($::de1(scale_weight_rate), 2) }]]
+								}
+							}
+
+							espresso_resistance_weight append $resistance_weight
+						}
+
+						# diff_flow_rate is defined in vars.tcl, as of 2021-02
+						# On Android, it now returns $::gui::state::_delta_flow
+
+						set flow_delta [diff_flow_rate]
+						set negative_flow_delta_for_chart 0
+
+
+						if {$this_substate == "preinfusion"} {
+
+							# don't track flow rate delta during preinfusion
+							# because the puck is absorbing water,
+							# and so the numbers aren't useful
+							# (likely just pump variability)
+
+							set flow_delta 0
+						}
+
+						if {$flow_delta > 0} {
+
+							if {$::settings(enable_negative_flow_charts) == 1} {
+
+								# experimental chart from the top
+
+								set negative_flow_delta_for_chart \
+									[expr {6.0 - (10.0 * $flow_delta)}]
+
+								set negative_flow_delta_for_chart_2x \
+									[expr {12.0 - (10.0 * $flow_delta)}]
+
+								espresso_flow_delta_negative append \
+									$negative_flow_delta_for_chart
+
+								espresso_flow_delta_negative_2x append \
+									$negative_flow_delta_for_chart_2x
+							}
+
+							espresso_flow_delta append 0
+
+						} else {
+
+							espresso_flow_delta append [expr {abs(10*$flow_delta)}]
+
+							if {$::settings(enable_negative_flow_charts) == 1} {
+
+								espresso_flow_delta_negative append 6
+								espresso_flow_delta_negative_2x append 12
+							}
+						}
+
+						# diff_pressure is defined in vars.tcl, as of 2021-02
+						# On Android, it now returns $::gui::state::_delta_pressure
+
+						set pressure_delta [diff_pressure]
+						espresso_pressure_delta append [expr {abs ($pressure_delta) / $millitime}]
+
+						espresso_temperature_mix append \
+							[return_temperature_number $MixTemp]
+
+						espresso_temperature_basket append \
+							[return_temperature_number $HeadTemp]
+
+						espresso_state_change append $::gui::state::_state_change_chart_value
+
+						# don't chart goals at zero, instead take them off the chart
+
+						if {$SetGroupFlow == 0} {
+							espresso_flow_goal append "-1"
+							espresso_flow_goal_2x append "-1"
+						} else {
+							espresso_flow_goal append $SetGroupFlow
+							espresso_flow_goal_2x append [expr {2.0 * $SetGroupFlow}]
+						}
+
+						# don't chart goals at zero, instead take them off the chart
+
+						if {$::de1(goal_pressure) == 0} {
+							espresso_pressure_goal append "-1"
+						} else {
+							espresso_pressure_goal append $SetGroupPressure
+						}
+
+						espresso_temperature_goal append \
+							[return_temperature_number $SetHeadTemp]
+
+
+						set total_water_volume \
+							[expr {$::de1(preinfusion_volume) + $::de1(pour_volume)}]
+
+						set total_water_volume_divided \
+							[expr {0.1 * ($::de1(preinfusion_volume) + $::de1(pour_volume))}]
+
+						espresso_water_dispensed append $total_water_volume_divided
+
+					}
+				}
+
+				Steam {
+					if { [::de1::state::is_flow_during_state $this_state $this_substate] } {
+
+						steam_pressure append [round_to_two_digits $GroupPressure]
+
+						if {$GroupPressure > $::settings(steam_over_pressure_threshold)} {
+							borg toast [translate "Warning: steam pressure is too high"]
+						}
+						if {$SteamTemp > $::settings(steam_over_temp_threshold)} {
+							borg toast [translate "Warning: steam temperature is too high"]
+						}
+
+						steam_flow append [round_to_two_digits $GroupFlow]
+
+						steam_flow_goal append [round_to_two_digits [expr {$::settings(steam_flow) / 100.0}]]
+
+						if {$::settings(enable_fahrenheit) == 1} {
+							steam_temperature append [round_to_integer [celsius_to_fahrenheit $SteamTemp]]
+							steam_temperature100th append [round_to_two_digits [expr {[celsius_to_fahrenheit $SteamTemp] / 100.00}]]
+						} else {
+							steam_temperature append [round_to_integer $SteamTemp]
+							steam_temperature100th append [round_to_two_digits [expr {$SteamTemp / 100.00}]]
+						}
+
+						steam_elapsed append [expr {[steam_pour_millitimer $update_received]/1000.0}]
+					}
+				}
+
+				default {}
+			}
+
+		}
+	} ;# append_live_data_to_espresso_chart
+
+} ;# ::gui::update
+
+
+proc gridconfigure {widget} {
+	# tkblt has not implemented this command, despite what the docs say
+	if {[package versions BLT] != ""} {
+		$widget grid configure -color $::grid_color 
+	}
+}

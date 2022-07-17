@@ -32,7 +32,7 @@ source "[homedir]/skins/default/standard_stop_buttons.tcl"
 #set_de1_screen_saver_directory "[homedir]/saver"
 
 # include the generic settings features for all DE1 skins.  
-source "[homedir]/skins/default/de1_skin_settings.tcl"
+#source "[homedir]/skins/default/de1_skin_settings.tcl"
 
 
 # example of loading a custom font (you need to indicate the TTF file and the font size)
@@ -149,7 +149,7 @@ add_de1_text "espresso" $column1 [expr {$pos_top + (4.5 * $spacer)}] -justify ri
 #######################
 # weight
 add_de1_variable "espresso" $column3 [expr {$pos_top + (4.5 * $spacer)}] -justify right -anchor "ne" -font $font -fill $dark -width [rescale_x_skin 620] -textvariable {[waterweight_label_text]}
-	#add_de1_variable "off" $column3 [expr {$pos_top + (4 * $spacer)}] -justify left -anchor "ne" -text "" -font $font -fill $lighter -width [rescale_x_skin 520] -textvariable {[finalwaterweight_text]} 
+	#add_de1_variable "off" $column3 [expr {$pos_top + (4 * $spacer)}] -justify left -anchor "ne" -text "" -font $font -fill $lighter -width [rescale_x_skin 520] -textvariable {[drink_weight_text]} 
 	add_de1_variable "espresso" $column3 [expr {$pos_top + (5.5 * $spacer)}] -justify left -anchor "ne" -text "" -font $font -fill $lighter -width [rescale_x_skin 620] -textvariable {[waterweight_text]} 
 	add_de1_variable "espresso" $column3 [expr {$pos_top + (6.5 * $spacer)}] -justify left -anchor "ne" -text "" -font $font -fill $lighter -width [rescale_x_skin 620] -textvariable {[waterweightflow_text]} 
 
